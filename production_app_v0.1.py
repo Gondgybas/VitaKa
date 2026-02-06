@@ -3,10 +3,12 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import pandas as pd
 from openpyxl import Workbook, load_workbook
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
+import json
 
 DATABASE_FILE = "production_database.xlsx"
+
 
 def initialize_database():
     if not os.path.exists(DATABASE_FILE):
@@ -18,7 +20,7 @@ def initialize_database():
             "Количество штук", "Общая площадь", "Зарезервировано", "Доступно", "Дата добавления"
         ])
         orders_sheet = wb.create_sheet("Orders")
-        orders_sheet.append(["ID заказа", "Название заказа", "Заказчик", "Дата создания", "Статус", "Примечания"])
+        orders_sheet.append(["ID заказа", "Название заказа", "Заказчик", "��ата создания", "Статус", "Примечания"])
         order_details_sheet = wb.create_sheet("OrderDetails")
         order_details_sheet.append(["ID", "ID заказа", "Название детали", "Количество"])
         reservations_sheet = wb.create_sheet("Reservations")
@@ -34,6 +36,7 @@ def initialize_database():
         wb.save(DATABASE_FILE)
         print(f"База данных '{DATABASE_FILE}' создана!")
 
+
 def load_data(sheet_name):
     try:
         df = pd.read_excel(DATABASE_FILE, sheet_name=sheet_name, engine='openpyxl')
@@ -44,6 +47,7 @@ def load_data(sheet_name):
     except Exception as e:
         print(f"Ошибка загрузки данных из {sheet_name}: {e}")
         return pd.DataFrame()
+
 
 def save_data(sheet_name, dataframe):
     try:
@@ -62,42 +66,57 @@ def save_data(sheet_name, dataframe):
         print(f"Ошибка сохранения данных в {sheet_name}: {e}")
         messagebox.showerror("Ошибка", f"Невозможно сохранить данные: {e}")
 
+
 class ProductionApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Система учета производства")
         self.root.geometry("1400x800")
         self.root.configure(bg='#f0f0f0')
+
+        # Инициализация переменных toggles
+        self.materials_toggles = {}
+        self.orders_toggles = {}
+        self.reservations_toggles = {}
+        self.balance_toggles = {}
+        self.writeoffs_toggles = {}
+
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
         self.materials_frame = tk.Frame(self.notebook, bg='white')
         self.notebook.add(self.materials_frame, text='Материалы на складе')
         self.setup_materials_tab()
+
         self.orders_frame = tk.Frame(self.notebook, bg='white')
         self.notebook.add(self.orders_frame, text='Заказы')
         self.setup_orders_tab()
+
         self.reservations_frame = tk.Frame(self.notebook, bg='white')
         self.notebook.add(self.reservations_frame, text='Резервирование')
         self.setup_reservations_tab()
+
         self.writeoffs_frame = tk.Frame(self.notebook, bg='white')
         self.notebook.add(self.writeoffs_frame, text='Списание материалов')
         self.setup_writeoffs_tab()
+
         self.balance_frame = tk.Frame(self.notebook, bg='white')
         self.notebook.add(self.balance_frame, text='Баланс материалов')
         self.setup_balance_tab()
+
+        # Загрузка настроек и обработчик закрытия
+        self.load_toggle_settings()
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def create_filter_panel(self, parent_frame, tree_widget, columns_to_filter, refresh_callback):
         """Создание панели фильтрации для любой таблицы"""
         filter_frame = tk.LabelFrame(parent_frame, text="🔍 Фильтры", bg='#e8f4f8', font=("Arial", 10, "bold"))
         filter_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        # Словарь для хранения Entry виджетов фильтров
         filter_entries = {}
-
-        # Создаём поля фильтрации для каждой колонки
         row = 0
         col = 0
-        max_cols = 4  # Количество фильтров в одной строке
+        max_cols = 4
 
         for column_name in columns_to_filter:
             filter_container = tk.Frame(filter_frame, bg='#e8f4f8')
@@ -110,7 +129,6 @@ class ProductionApp:
 
             filter_entries[column_name] = entry
 
-            # Привязываем событие изменения текста к функции фильтрации
             entry.bind('<KeyRelease>', lambda e, tree=tree_widget, filters=filter_entries, cb=refresh_callback:
             self.apply_filters(tree, filters, cb))
 
@@ -119,7 +137,6 @@ class ProductionApp:
                 col = 0
                 row += 1
 
-        # Кнопки управления фильтрами
         buttons_container = tk.Frame(filter_frame, bg='#e8f4f8')
         buttons_container.grid(row=row + 1, column=0, columnspan=max_cols, pady=5)
 
@@ -135,28 +152,23 @@ class ProductionApp:
 
     def apply_filters(self, tree, filter_entries, refresh_callback):
         """Применить фильтры к таблице"""
-        # Собираем активные фильтры
         active_filters = {}
         for col_name, entry in filter_entries.items():
             filter_text = entry.get().strip().lower()
             if filter_text:
                 active_filters[col_name] = filter_text
 
-        # Если нет фильтров - показываем всё
         if not active_filters:
             refresh_callback()
             return
 
-        # Сохраняем текущие данные
         all_items = []
         for item in tree.get_children():
             all_items.append(tree.item(item)['values'])
 
-        # Очищаем таблицу
         for item in tree.get_children():
             tree.delete(item)
 
-        # Фильтруем и добавляем обратно
         columns = tree['columns']
         for item_values in all_items:
             match = True
@@ -179,27 +191,125 @@ class ProductionApp:
             entry.delete(0, tk.END)
         refresh_callback()
 
+    def create_visibility_toggles(self, parent_frame, tree_widget, toggle_options, refresh_callback):
+        """Создание переключателей видимости для таблицы"""
+        toggles_frame = tk.Frame(parent_frame, bg='#fff9e6')
+        toggles_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        tk.Label(toggles_frame, text="👁️ Отображение:", bg='#fff9e6', font=("Arial", 10, "bold")).pack(side=tk.LEFT,
+                                                                                                       padx=5)
+
+        toggle_vars = {}
+
+        for option_key, option_text in toggle_options.items():
+            var = tk.BooleanVar(value=True)
+            toggle_vars[option_key] = var
+
+            cb = tk.Checkbutton(
+                toggles_frame,
+                text=option_text,
+                variable=var,
+                bg='#fff9e6',
+                font=("Arial", 9),
+                command=refresh_callback
+            )
+            cb.pack(side=tk.LEFT, padx=10)
+
+        return toggle_vars
+
+    def save_toggle_settings(self):
+        """Сохранить настройки переключателей"""
+        settings = {}
+
+        if hasattr(self, 'materials_toggles'):
+            settings['materials'] = {k: v.get() for k, v in self.materials_toggles.items()}
+
+        if hasattr(self, 'orders_toggles'):
+            settings['orders'] = {k: v.get() for k, v in self.orders_toggles.items()}
+
+        if hasattr(self, 'reservations_toggles'):
+            settings['reservations'] = {k: v.get() for k, v in self.reservations_toggles.items()}
+
+        if hasattr(self, 'balance_toggles'):
+            settings['balance'] = {k: v.get() for k, v in self.balance_toggles.items()}
+
+        if hasattr(self, 'writeoffs_toggles'):
+            settings['writeoffs'] = {k: v.get() for k, v in self.writeoffs_toggles.items()}
+
+        try:
+            with open('toggle_settings.json', 'w', encoding='utf-8') as f:
+                json.dump(settings, f, ensure_ascii=False, indent=2)
+        except:
+            pass
+
+    def load_toggle_settings(self):
+        """Загрузить настройки переключателей"""
+        try:
+            with open('toggle_settings.json', 'r', encoding='utf-8') as f:
+                settings = json.load(f)
+
+            if 'materials' in settings and hasattr(self, 'materials_toggles'):
+                for k, v in settings['materials'].items():
+                    if k in self.materials_toggles:
+                        self.materials_toggles[k].set(v)
+
+            if 'orders' in settings and hasattr(self, 'orders_toggles'):
+                for k, v in settings['orders'].items():
+                    if k in self.orders_toggles:
+                        self.orders_toggles[k].set(v)
+
+            if 'reservations' in settings and hasattr(self, 'reservations_toggles'):
+                for k, v in settings['reservations'].items():
+                    if k in self.reservations_toggles:
+                        self.reservations_toggles[k].set(v)
+
+            if 'balance' in settings and hasattr(self, 'balance_toggles'):
+                for k, v in settings['balance'].items():
+                    if k in self.balance_toggles:
+                        self.balance_toggles[k].set(v)
+
+            if 'writeoffs' in settings and hasattr(self, 'writeoffs_toggles'):
+                for k, v in settings['writeoffs'].items():
+                    if k in self.writeoffs_toggles:
+                        self.writeoffs_toggles[k].set(v)
+
+            self.refresh_materials()
+            self.refresh_orders()
+            self.refresh_reservations()
+            self.refresh_balance()
+            if hasattr(self, 'refresh_writeoffs'):
+                self.refresh_writeoffs()
+        except:
+            pass
+
+    def on_closing(self):
+        """Обработчик закрытия окна"""
+        self.save_toggle_settings()
+        self.root.destroy()
+
     def setup_materials_tab(self):
         header = tk.Label(self.materials_frame, text="Учет листового проката на складе",
-                         font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
+                          font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
         header.pack(pady=10)
         tree_frame = tk.Frame(self.materials_frame, bg='white')
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
         scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
         self.materials_tree = ttk.Treeview(tree_frame,
-            columns=("ID", "Марка", "Толщина", "Длина", "Ширина", "Кол-во шт", "Площадь", "Резерв", "Доступно", "Дата"),
-            show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+                                           columns=("ID", "Марка", "Толщина", "Длина", "Ширина", "Кол-во шт", "Площадь",
+                                                    "Резерв", "Доступно", "Дата"),
+                                           show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
         scroll_y.config(command=self.materials_tree.yview)
         scroll_x.config(command=self.materials_tree.xview)
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
         columns_config = {"ID": 50, "Марка": 100, "Толщина": 80, "Длина": 80, "Ширина": 80,
-            "Кол-во шт": 80, "Площадь": 100, "Резерв": 80, "Доступно": 80, "Дата": 100}
+                          "Кол-во шт": 80, "Площадь": 100, "Резерв": 80, "Доступно": 80, "Дата": 100}
         for col, width in columns_config.items():
             self.materials_tree.heading(col, text=col)
             self.materials_tree.column(col, width=width, anchor=tk.CENTER)
         self.materials_tree.pack(fill=tk.BOTH, expand=True)
+
         # Панель фильтрации
         self.materials_filters = self.create_filter_panel(
             self.materials_frame,
@@ -207,15 +317,33 @@ class ProductionApp:
             ["ID", "Марка", "Толщина", "Длина", "Ширина", "Кол-во шт", "Резерв", "Доступно"],
             self.refresh_materials
         )
+
+        # Переключатели видимости
+        self.materials_toggles = self.create_visibility_toggles(
+            self.materials_frame,
+            self.materials_tree,
+            {
+                'show_zero_stock': '📦 Показать с нулевым остатком',
+                'show_zero_available': '✅ Показат�� с нулём доступных'
+            },
+            self.refresh_materials
+        )
+
         buttons_frame = tk.Frame(self.materials_frame, bg='white')
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
         btn_style = {"font": ("Arial", 10), "width": 15, "height": 2}
-        tk.Button(buttons_frame, text="Добавить", bg='#27ae60', fg='white', command=self.add_material, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Импорт из Excel", bg='#9b59b6', fg='white', command=self.import_materials, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Скачать шаблон", bg='#3498db', fg='white', command=self.download_template, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Редактировать", bg='#f39c12', fg='white', command=self.edit_material, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Удалить", bg='#e74c3c', fg='white', command=self.delete_material, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_materials, **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Добавить", bg='#27ae60', fg='white', command=self.add_material,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Импорт из Excel", bg='#9b59b6', fg='white', command=self.import_materials,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Скачать шаблон", bg='#3498db', fg='white', command=self.download_template,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Редактировать", bg='#f39c12', fg='white', command=self.edit_material,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Удалить", bg='#e74c3c', fg='white', command=self.delete_material,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_materials,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
         self.refresh_materials()
 
     def refresh_materials(self):
@@ -223,15 +351,31 @@ class ProductionApp:
             self.materials_tree.delete(i)
         df = load_data("Materials")
         if not df.empty:
+            show_zero_stock = True
+            show_zero_available = True
+
+            if hasattr(self, 'materials_toggles') and self.materials_toggles:
+                show_zero_stock = self.materials_toggles.get('show_zero_stock', tk.BooleanVar(value=True)).get()
+                show_zero_available = self.materials_toggles.get('show_zero_available', tk.BooleanVar(value=True)).get()
+
             for index, row in df.iterrows():
+                qty = int(row["Количество штук"])
+                available = int(row["Доступно"])
+
+                if not show_zero_stock and qty == 0:
+                    continue
+                if not show_zero_available and available == 0:
+                    continue
+
                 values = [row["ID"], row["Марка"], row["Толщина"], row["Длина"], row["Ширина"],
-                         row["Количество штук"], row["Общая площадь"], row["Зарезервировано"],
-                         row["Доступно"], row["Дата добавления"]]
+                          row["Количество штук"], row["Общая площадь"], row["Зарезервировано"],
+                          row["Доступно"], row["Дата добавления"]]
                 self.materials_tree.insert("", "end", values=values)
 
     def download_template(self):
         file_path = filedialog.asksaveasfilename(title="Сохранить шаблон", defaultextension=".xlsx",
-            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")], initialfile="template_materials.xlsx")
+                                                 filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+                                                 initialfile="template_materials.xlsx")
         if not file_path:
             return
         try:
@@ -259,7 +403,7 @@ class ProductionApp:
 
     def import_materials(self):
         file_path = filedialog.askopenfilename(title="Выберите файл Excel с материалами",
-            filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")])
+                                               filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")])
         if not file_path:
             return
         try:
@@ -283,7 +427,7 @@ class ProductionApp:
                     width = float(row["Ширина"])
                     quantity = int(row["Количество штук"])
                     duplicate = materials_df[(materials_df["Марка"] == marka) & (materials_df["Толщина"] == thickness) &
-                        (materials_df["Длина"] == length) & (materials_df["Ширина"] == width)]
+                                             (materials_df["Длина"] == length) & (materials_df["Ширина"] == width)]
                     if not duplicate.empty:
                         material_id = duplicate.iloc[0]["ID"]
                         old_qty = int(duplicate.iloc[0]["Количество штук"])
@@ -297,9 +441,10 @@ class ProductionApp:
                         current_max_id += 1
                         area = (length * width * quantity) / 1000000
                         new_row = pd.DataFrame([{"ID": current_max_id, "Марка": marka, "Толщина": thickness,
-                            "Длина": length, "Ширина": width, "Количество штук": quantity,
-                            "Общая площадь": round(area, 2), "Зарезервировано": 0, "Доступно": quantity,
-                            "Дата добавления": datetime.now().strftime("%Y-%m-%d")}])
+                                                 "Длина": length, "Ширина": width, "Количество штук": quantity,
+                                                 "Общая площадь": round(area, 2), "Зарезервировано": 0,
+                                                 "Доступно": quantity,
+                                                 "Дата добавления": datetime.now().strftime("%Y-%m-%d")}])
                         materials_df = pd.concat([materials_df, new_row], ignore_index=True)
                     imported_count += 1
                 except Exception as e:
@@ -319,9 +464,10 @@ class ProductionApp:
         add_window.title("Добавить материал")
         add_window.geometry("450x500")
         add_window.configure(bg='#ecf0f1')
-        tk.Label(add_window, text="Добавление листового проката", font=("Arial", 12, "bold"), bg='#ecf0f1').pack(pady=10)
+        tk.Label(add_window, text="Добавление листового проката", font=("Arial", 12, "bold"), bg='#ecf0f1').pack(
+            pady=10)
         fields = [("Марка стали:", "marka"), ("Толщина (мм):", "thickness"), ("Длина (мм):", "length"),
-            ("Ширина (мм):", "width"), ("Количество штук:", "quantity")]
+                  ("Ширина (мм):", "width"), ("Количество штук:", "quantity")]
         entries = {}
         for label_text, key in fields:
             frame = tk.Frame(add_window, bg='#ecf0f1')
@@ -330,6 +476,7 @@ class ProductionApp:
             entry = tk.Entry(frame, font=("Arial", 10))
             entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
             entries[key] = entry
+
         def save_material():
             try:
                 marka = entries["marka"].get().strip()
@@ -344,8 +491,9 @@ class ProductionApp:
                 df = load_data("Materials")
                 new_id = 1 if df.empty else int(df["ID"].max()) + 1
                 new_row = pd.DataFrame([{"ID": new_id, "Марка": marka, "Толщина": thickness, "Длина": length,
-                    "Ширина": width, "Количество штук": quantity, "Общая площадь": round(area, 2),
-                    "Зарезервировано": 0, "Доступно": quantity, "Дата добавления": datetime.now().strftime("%Y-%m-%d")}])
+                                         "Ширина": width, "Количество штук": quantity, "Общая площадь": round(area, 2),
+                                         "Зарезервировано": 0, "Доступно": quantity,
+                                         "Дата добавления": datetime.now().strftime("%Y-%m-%d")}])
                 df = pd.concat([df, new_row], ignore_index=True)
                 save_data("Materials", df)
                 self.refresh_materials()
@@ -356,7 +504,9 @@ class ProductionApp:
                 messagebox.showerror("Ошибка", "Проверьте правильность ввода числовых значений!")
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось добавить материал: {e}")
-        tk.Button(add_window, text="Сохранить", bg='#27ae60', fg='white', font=("Arial", 12, "bold"), command=save_material).pack(pady=20)
+
+        tk.Button(add_window, text="Сохранить", bg='#27ae60', fg='white', font=("Arial", 12, "bold"),
+                  command=save_material).pack(pady=20)
 
     def edit_material(self):
         selected = self.materials_tree.selection()
@@ -372,7 +522,7 @@ class ProductionApp:
         edit_window.configure(bg='#ecf0f1')
         tk.Label(edit_window, text="Редактирование материала", font=("Arial", 12, "bold"), bg='#ecf0f1').pack(pady=10)
         fields = [("Марка стали:", "Марка"), ("Толщина (мм):", "Толщина"), ("Длина (мм):", "Длина"),
-            ("Ширина (мм):", "Ширина"), ("Количество штук:", "Количество штук")]
+                  ("Ширина (мм):", "Ширина"), ("Количество штук:", "Количество штук")]
         entries = {}
         for label_text, key in fields:
             frame = tk.Frame(edit_window, bg='#ecf0f1')
@@ -382,6 +532,7 @@ class ProductionApp:
             entry.insert(0, str(row[key]))
             entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
             entries[key] = entry
+
         def save_changes():
             try:
                 thickness = float(entries["Толщина"].get())
@@ -404,7 +555,9 @@ class ProductionApp:
                 messagebox.showinfo("Успех", "Материал успешно обновлен!")
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось обновить материал: {e}")
-        tk.Button(edit_window, text="Сохранить", bg='#3498db', fg='white', font=("Arial", 12, "bold"), command=save_changes).pack(pady=20)
+
+        tk.Button(edit_window, text="Сохранить", bg='#3498db', fg='white', font=("Arial", 12, "bold"),
+                  command=save_changes).pack(pady=20)
 
     def delete_material(self):
         selected = self.materials_tree.selection()
@@ -423,15 +576,17 @@ class ProductionApp:
             messagebox.showinfo("Успех", f"Удалено материалов: {count}")
 
     def setup_orders_tab(self):
-        header = tk.Label(self.orders_frame, text="Управление заказами", font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
+        header = tk.Label(self.orders_frame, text="Управление заказами", font=("Arial", 16, "bold"), bg='white',
+                          fg='#2c3e50')
         header.pack(pady=10)
         orders_label = tk.Label(self.orders_frame, text="Список заказов", font=("Arial", 12, "bold"), bg='white')
         orders_label.pack(pady=5)
         tree_frame = tk.Frame(self.orders_frame, bg='white')
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
-        self.orders_tree = ttk.Treeview(tree_frame, columns=("ID", "Название", "Заказчик", "Дата", "Статус", "Примечания"),
-            show="headings", yscrollcommand=scroll_y.set, height=8)
+        self.orders_tree = ttk.Treeview(tree_frame,
+                                        columns=("ID", "Название", "Заказчик", "Дата", "Статус", "Примечания"),
+                                        show="headings", yscrollcommand=scroll_y.set, height=8)
         scroll_y.config(command=self.orders_tree.yview)
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         columns_config = {"ID": 80, "Название": 200, "Заказчик": 150, "Дата": 100, "Статус": 100, "Примечания": 200}
@@ -439,6 +594,8 @@ class ProductionApp:
             self.orders_tree.heading(col, text=col)
             self.orders_tree.column(col, width=width, anchor=tk.CENTER)
         self.orders_tree.pack(fill=tk.BOTH, expand=True)
+        self.orders_tree.bind('<<TreeviewSelect>>', self.on_order_select)
+
         # Панель фильтрации заказов
         self.orders_filters = self.create_filter_panel(
             self.orders_frame,
@@ -446,29 +603,50 @@ class ProductionApp:
             ["ID", "Название", "Заказчик", "Статус"],
             self.refresh_orders
         )
-        self.orders_tree.bind('<<TreeviewSelect>>', self.on_order_select)
+
+        # Переключатели видимости заказов
+        self.orders_toggles = self.create_visibility_toggles(
+            self.orders_frame,
+            self.orders_tree,
+            {
+                'show_completed': '✅ Показать завершённые',
+                'show_cancelled': '❌ Показать отменённые'
+            },
+            self.refresh_orders
+        )
+
         buttons_frame = tk.Frame(self.orders_frame, bg='white')
         buttons_frame.pack(fill=tk.X, padx=10, pady=5)
         btn_style = {"font": ("Arial", 10), "width": 15, "height": 2}
-        tk.Button(buttons_frame, text="Добавить заказ", bg='#27ae60', fg='white', command=self.add_order, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Импорт из Excel", bg='#9b59b6', fg='white', command=self.import_orders, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Скачать шаблон", bg='#3498db', fg='white', command=self.download_orders_template, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Редактировать", bg='#f39c12', fg='white', command=self.edit_order, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Удалить заказ", bg='#e74c3c', fg='white', command=self.delete_order, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_orders, **btn_style).pack(side=tk.LEFT, padx=5)
-        details_label = tk.Label(self.orders_frame, text="Детали выбранного заказа", font=("Arial", 12, "bold"), bg='white')
+        tk.Button(buttons_frame, text="Добавить заказ", bg='#27ae60', fg='white', command=self.add_order,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Импорт из Excel", bg='#9b59b6', fg='white', command=self.import_orders,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Скачать шаблон", bg='#3498db', fg='white', command=self.download_orders_template,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Редактировать", bg='#f39c12', fg='white', command=self.edit_order,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Удалить заказ", bg='#e74c3c', fg='white', command=self.delete_order,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_orders,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
+
+        details_label = tk.Label(self.orders_frame, text="Детали выбранного заказа", font=("Arial", 12, "bold"),
+                                 bg='white')
         details_label.pack(pady=5)
         details_tree_frame = tk.Frame(self.orders_frame, bg='white')
         details_tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         scroll_y2 = tk.Scrollbar(details_tree_frame, orient=tk.VERTICAL)
-        self.order_details_tree = ttk.Treeview(details_tree_frame, columns=("ID", "ID заказа", "Название детали", "Количество"),
-            show="headings", yscrollcommand=scroll_y2.set, height=6)
+        self.order_details_tree = ttk.Treeview(details_tree_frame,
+                                               columns=("ID", "ID заказа", "Название детали", "Количество"),
+                                               show="headings", yscrollcommand=scroll_y2.set, height=6)
         scroll_y2.config(command=self.order_details_tree.yview)
         scroll_y2.pack(side=tk.RIGHT, fill=tk.Y)
         for col in ["ID", "ID заказа", "Название детали", "Количество"]:
             self.order_details_tree.heading(col, text=col)
             self.order_details_tree.column(col, width=150, anchor=tk.CENTER)
         self.order_details_tree.pack(fill=tk.BOTH, expand=True)
+
         # Панель фильтрации деталей
         self.order_details_filters = self.create_filter_panel(
             self.orders_frame,
@@ -476,10 +654,13 @@ class ProductionApp:
             ["Название детали", "Количество"],
             self.refresh_order_details
         )
+
         details_buttons_frame = tk.Frame(self.orders_frame, bg='white')
         details_buttons_frame.pack(fill=tk.X, padx=10, pady=5)
-        tk.Button(details_buttons_frame, text="Добавить деталь", bg='#27ae60', fg='white', command=self.add_order_detail, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(details_buttons_frame, text="Удалить деталь", bg='#e74c3c', fg='white', command=self.delete_order_detail, **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(details_buttons_frame, text="Добавить деталь", bg='#27ae60', fg='white',
+                  command=self.add_order_detail, **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(details_buttons_frame, text="Удалить деталь", bg='#e74c3c', fg='white',
+                  command=self.delete_order_detail, **btn_style).pack(side=tk.LEFT, padx=5)
         self.refresh_orders()
 
     def on_order_select(self, event):
@@ -490,8 +671,23 @@ class ProductionApp:
             self.orders_tree.delete(i)
         df = load_data("Orders")
         if not df.empty:
+            show_completed = True
+            show_cancelled = True
+
+            if hasattr(self, 'orders_toggles') and self.orders_toggles:
+                show_completed = self.orders_toggles.get('show_completed', tk.BooleanVar(value=True)).get()
+                show_cancelled = self.orders_toggles.get('show_cancelled', tk.BooleanVar(value=True)).get()
+
             for index, row in df.iterrows():
-                values = [row["ID заказа"], row["Название заказа"], row["Заказчик"], row["Дата создания"], row["Статус"], row["Примечания"]]
+                status = row["Статус"]
+
+                if not show_completed and status == "Завершен":
+                    continue
+                if not show_cancelled and status == "Отменен":
+                    continue
+
+                values = [row["ID заказа"], row["Название заказа"], row["Заказчик"],
+                          row["Дата создания"], row["Статус"], row["Примечания"]]
                 self.orders_tree.insert("", "end", values=values)
 
     def refresh_order_details(self):
@@ -509,7 +705,8 @@ class ProductionApp:
 
     def download_orders_template(self):
         file_path = filedialog.asksaveasfilename(title="Сохранить шаблон", defaultextension=".xlsx",
-            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")], initialfile="template_orders.xlsx")
+                                                 filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+                                                 initialfile="template_orders.xlsx")
         if not file_path:
             return
         try:
@@ -558,13 +755,14 @@ class ProductionApp:
                         pass
                 ws_details.column_dimensions[column].width = max_length + 2
             wb.save(file_path)
-            messagebox.showinfo("Успех", f"Шаблон сохранен в:\n{file_path}\n\n📋 ИНСТРУКЦИЯ:\n\nЛист 'Заказы':\n• Название заказа - уникальное имя\n• Заказчик - обязательно\n• Статус: Новый, В работе, Завершен, Отменен\n• Примечания - опционально\n\nЛист 'Детали':\n• Название заказа - должно совпадать с листом 'Заказы'\n• Название детали - обязательно\n• Количество - число")
+            messagebox.showinfo("Успех",
+                                f"Шаблон сохранен в:\n{file_path}\n\n📋 ИНСТРУКЦИЯ:\n\nЛист 'Заказы':\n• Название заказа - уникальное имя\n• Заказчик - обязательно\n• Статус: Новый, В работе, Завершен, Отменен\n• Примечания - опционально\n\nЛист 'Детали':\n• Название заказа - должно совпадать с листом 'Заказы'\n• Название детали - обязательно\n• Количество - число")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось создать шаблон: {e}")
 
     def import_orders(self):
         file_path = filedialog.askopenfilename(title="Выберите файл Excel с заказами",
-            filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")])
+                                               filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")])
         if not file_path:
             return
         try:
@@ -582,13 +780,15 @@ class ProductionApp:
             required_columns_orders = ["Название заказа", "Заказчик"]
             missing_columns = [col for col in required_columns_orders if col not in orders_import_df.columns]
             if missing_columns:
-                messagebox.showerror("Ошибка", f"В листе 'Заказы' отсутствуют колонки:\n{', '.join(missing_columns)}\n\nИспользуйте кнопку 'Скачать шаблон'.")
+                messagebox.showerror("Ошибка",
+                                     f"В листе 'Заказы' отсутствуют колонки:\n{', '.join(missing_columns)}\n\nИспользуйте кнопку 'Скачать шаблон'.")
                 return
             if has_details and not details_import_df.empty:
                 required_columns_details = ["Название заказа", "Название детали", "Количество"]
                 missing_details = [col for col in required_columns_details if col not in details_import_df.columns]
                 if missing_details:
-                    messagebox.showwarning("Предупреждение", f"В листе 'Детали' отсутствуют колонки:\n{', '.join(missing_details)}\n\nДетали не будут импортированы.")
+                    messagebox.showwarning("Предупреждение",
+                                           f"В листе 'Детали' отсутствуют колонки:\n{', '.join(missing_details)}\n\nДетали не будут импортированы.")
                     has_details = False
             orders_df = load_data("Orders")
             current_max_order_id = 1000 if orders_df.empty else int(orders_df["ID заказа"].max())
@@ -614,7 +814,8 @@ class ProductionApp:
                         if status_input in valid_statuses:
                             status = status_input
                         else:
-                            errors.append(f"Заказы, строка {idx + 2}: Неверный статус '{status_input}', установлен 'Новый'")
+                            errors.append(
+                                f"Заказы, строка {idx + 2}: Неверный статус '{status_input}', установлен 'Новый'")
                     notes = ""
                     if "Примечания" in orders_import_df.columns and not pd.isna(row["Примечания"]):
                         notes = str(row["Примечания"]).strip()
@@ -647,16 +848,19 @@ class ProductionApp:
                             continue
                         detail_name = str(row["Название детали"]).strip()
                         if pd.isna(row["Количество"]):
-                            errors.append(f"Детали, строка {idx + 2}: Отсутствует количество для детали '{detail_name}'")
+                            errors.append(
+                                f"Детали, строка {idx + 2}: Отсутствует количество для детали '{detail_name}'")
                             continue
                         try:
                             quantity = float(row["Количество"])
                             quantity = int(quantity)
                             if quantity <= 0:
-                                errors.append(f"Детали, строка {idx + 2}: Количество должно быть больше нуля для детали '{detail_name}'")
+                                errors.append(
+                                    f"Детали, строка {idx + 2}: Количество должно быть больше нуля для детали '{detail_name}'")
                                 continue
                         except (ValueError, TypeError):
-                            errors.append(f"Детали, строка {idx + 2}: Неверное количество '{row['Коли��ество']}' для детали '{detail_name}'")
+                            errors.append(
+                                f"Детали, строка {idx + 2}: Неверное количество '{row['Количество']}' для детали '{detail_name}'")
                             continue
                         current_max_detail_id += 1
                         order_id = order_name_to_id[order_name]
@@ -700,11 +904,14 @@ class ProductionApp:
             entries[key] = entry
         status_frame = tk.Frame(add_window, bg='#ecf0f1')
         status_frame.pack(fill=tk.X, padx=20, pady=5)
-        tk.Label(status_frame, text="Статус:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
+        tk.Label(status_frame, text="Статус:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
+            side=tk.LEFT)
         status_var = tk.StringVar(value="Новый")
-        status_combo = ttk.Combobox(status_frame, textvariable=status_var, values=["Новый", "В работе", "Завершен", "Отменен"],
-            font=("Arial", 10), state="readonly")
+        status_combo = ttk.Combobox(status_frame, textvariable=status_var,
+                                    values=["Новый", "В работе", "Завершен", "Отменен"],
+                                    font=("Arial", 10), state="readonly")
         status_combo.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
         def save_order():
             try:
                 name = entries["name"].get().strip()
@@ -715,7 +922,8 @@ class ProductionApp:
                 df = load_data("Orders")
                 new_id = 1001 if df.empty else int(df["ID заказа"].max()) + 1
                 new_row = pd.DataFrame([{"ID заказа": new_id, "Название заказа": name, "Заказчик": customer,
-                    "Дата создания": datetime.now().strftime("%Y-%m-%d"), "Статус": status_var.get(), "Примечания": entries["notes"].get()}])
+                                         "Дата создания": datetime.now().strftime("%Y-%m-%d"),
+                                         "Статус": status_var.get(), "Примечания": entries["notes"].get()}])
                 df = pd.concat([df, new_row], ignore_index=True)
                 save_data("Orders", df)
                 self.refresh_orders()
@@ -723,7 +931,9 @@ class ProductionApp:
                 messagebox.showinfo("Успех", f"Заказ #{new_id} успешно создан!")
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось создать заказ: {e}")
-        tk.Button(add_window, text="Создать заказ", bg='#27ae60', fg='white', font=("Arial", 12, "bold"), command=save_order).pack(pady=20)
+
+        tk.Button(add_window, text="Создать заказ", bg='#27ae60', fg='white', font=("Arial", 12, "bold"),
+                  command=save_order).pack(pady=20)
 
     def edit_order(self):
         selected = self.orders_tree.selection()
@@ -737,7 +947,8 @@ class ProductionApp:
         edit_window.title("Редактировать заказ")
         edit_window.geometry("450x450")
         edit_window.configure(bg='#ecf0f1')
-        tk.Label(edit_window, text=f"Редактирование заказа #{item_id}", font=("Arial", 12, "bold"), bg='#ecf0f1').pack(pady=10)
+        tk.Label(edit_window, text=f"Редактирование заказа #{item_id}", font=("Arial", 12, "bold"), bg='#ecf0f1').pack(
+            pady=10)
         fields = [("Название заказа:", "Название заказа"), ("Заказчик:", "Заказчик"), ("Примечания:", "Примечания")]
         entries = {}
         for label_text, key in fields:
@@ -750,11 +961,14 @@ class ProductionApp:
             entries[key] = entry
         status_frame = tk.Frame(edit_window, bg='#ecf0f1')
         status_frame.pack(fill=tk.X, padx=20, pady=5)
-        tk.Label(status_frame, text="Статус:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
+        tk.Label(status_frame, text="Статус:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
+            side=tk.LEFT)
         status_var = tk.StringVar(value=row["Статус"])
-        status_combo = ttk.Combobox(status_frame, textvariable=status_var, values=["Новый", "В работе", "Завершен", "Отменен"],
-            font=("Arial", 10), state="readonly")
+        status_combo = ttk.Combobox(status_frame, textvariable=status_var,
+                                    values=["Новый", "В работе", "Завершен", "Отменен"],
+                                    font=("Arial", 10), state="readonly")
         status_combo.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
         def save_changes():
             try:
                 df.loc[df["ID заказа"] == item_id, "Название заказа"] = entries["Название заказа"].get()
@@ -767,7 +981,9 @@ class ProductionApp:
                 messagebox.showinfo("Успех", "Заказ успешно обновлен!")
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось обновить заказ: {e}")
-        tk.Button(edit_window, text="Сохранить", bg='#3498db', fg='white', font=("Arial", 12, "bold"), command=save_changes).pack(pady=20)
+
+        tk.Button(edit_window, text="Сохранить", bg='#3498db', fg='white', font=("Arial", 12, "bold"),
+                  command=save_changes).pack(pady=20)
 
     def delete_order(self):
         selected = self.orders_tree.selection()
@@ -800,17 +1016,21 @@ class ProductionApp:
         add_window.title("Добавить деталь")
         add_window.geometry("400x300")
         add_window.configure(bg='#ecf0f1')
-        tk.Label(add_window, text=f"Добавление детали к заказу #{order_id}", font=("Arial", 12, "bold"), bg='#ecf0f1').pack(pady=10)
+        tk.Label(add_window, text=f"Добавление детали к заказу #{order_id}", font=("Arial", 12, "bold"),
+                 bg='#ecf0f1').pack(pady=10)
         name_frame = tk.Frame(add_window, bg='#ecf0f1')
         name_frame.pack(fill=tk.X, padx=20, pady=5)
-        tk.Label(name_frame, text="Название детали:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
+        tk.Label(name_frame, text="Название детали:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
+            side=tk.LEFT)
         name_entry = tk.Entry(name_frame, font=("Arial", 10))
         name_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
         qty_frame = tk.Frame(add_window, bg='#ecf0f1')
         qty_frame.pack(fill=tk.X, padx=20, pady=5)
-        tk.Label(qty_frame, text="Количество:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
+        tk.Label(qty_frame, text="Количество:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
+            side=tk.LEFT)
         qty_entry = tk.Entry(qty_frame, font=("Arial", 10))
         qty_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
         def save_detail():
             try:
                 detail_name = name_entry.get().strip()
@@ -820,7 +1040,8 @@ class ProductionApp:
                     return
                 df = load_data("OrderDetails")
                 new_id = 1 if df.empty else int(df["ID"].max()) + 1
-                new_row = pd.DataFrame([{"ID": new_id, "ID заказа": order_id, "Название детали": detail_name, "Количество": quantity}])
+                new_row = pd.DataFrame(
+                    [{"ID": new_id, "ID заказа": order_id, "Название детали": detail_name, "Количество": quantity}])
                 df = pd.concat([df, new_row], ignore_index=True)
                 save_data("OrderDetails", df)
                 self.refresh_order_details()
@@ -830,7 +1051,9 @@ class ProductionApp:
                 messagebox.showerror("Ошибка", "Количество должно быть числом!")
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось добавить деталь: {e}")
-        tk.Button(add_window, text="Добавить", bg='#27ae60', fg='white', font=("Arial", 12, "bold"), command=save_detail).pack(pady=20)
+
+        tk.Button(add_window, text="Добавить", bg='#27ae60', fg='white', font=("Arial", 12, "bold"),
+                  command=save_detail).pack(pady=20)
 
     def delete_order_detail(self):
         selected = self.order_details_tree.selection()
@@ -848,15 +1071,17 @@ class ProductionApp:
             messagebox.showinfo("Успех", f"Удалено деталей: {count}")
 
     def setup_reservations_tab(self):
-        header = tk.Label(self.reservations_frame, text="Резервирование материалов", font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
+        header = tk.Label(self.reservations_frame, text="Резервирование материалов", font=("Arial", 16, "bold"),
+                          bg='white', fg='#2c3e50')
         header.pack(pady=10)
         tree_frame = tk.Frame(self.reservations_frame, bg='white')
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
         scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
         self.reservations_tree = ttk.Treeview(tree_frame,
-            columns=("ID", "Заказ", "Материал", "Марка", "Толщина", "Размер", "Резерв", "Списано", "Остаток", "Дата"),
-            show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+                                              columns=("ID", "Заказ", "Материал", "Марка", "Толщина", "Размер",
+                                                       "Резерв", "Списано", "Остаток", "Дата"),
+                                              show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
         scroll_y.config(command=self.reservations_tree.yview)
         scroll_x.config(command=self.reservations_tree.xview)
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
@@ -865,6 +1090,7 @@ class ProductionApp:
             self.reservations_tree.heading(col, text=col)
             self.reservations_tree.column(col, width=110, anchor=tk.CENTER)
         self.reservations_tree.pack(fill=tk.BOTH, expand=True)
+
         # Панель фильтрации
         self.reservations_filters = self.create_filter_panel(
             self.reservations_frame,
@@ -872,12 +1098,26 @@ class ProductionApp:
             ["ID", "Заказ", "Марка", "Толщина", "Резерв", "Списано", "Остаток"],
             self.refresh_reservations
         )
+
+        # Переключатели видимости
+        self.reservations_toggles = self.create_visibility_toggles(
+            self.reservations_frame,
+            self.reservations_tree,
+            {
+                'show_fully_written_off': '📝 Показать полностью списанные'
+            },
+            self.refresh_reservations
+        )
+
         buttons_frame = tk.Frame(self.reservations_frame, bg='white')
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
         btn_style = {"font": ("Arial", 10), "width": 18, "height": 2}
-        tk.Button(buttons_frame, text="Зарезервировать", bg='#27ae60', fg='white', command=self.add_reservation, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Удалить резерв", bg='#e74c3c', fg='white', command=self.delete_reservation, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_reservations, **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Зарезервировать", bg='#27ae60', fg='white', command=self.add_reservation,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Удалить резерв", bg='#e74c3c', fg='white', command=self.delete_reservation,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_reservations,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
         self.refresh_reservations()
 
     def refresh_reservations(self):
@@ -885,10 +1125,21 @@ class ProductionApp:
             self.reservations_tree.delete(i)
         df = load_data("Reservations")
         if not df.empty:
+            show_fully_written_off = True
+
+            if hasattr(self, 'reservations_toggles') and self.reservations_toggles:
+                show_fully_written_off = self.reservations_toggles.get('show_fully_written_off',
+                                                                       tk.BooleanVar(value=True)).get()
+
             for index, row in df.iterrows():
+                remainder = int(row["Остаток к списанию"])
+                if not show_fully_written_off and remainder == 0:
+                    continue
+
                 size_str = f"{row['Ширина']}x{row['Длина']}"
                 values = [row["ID резерва"], row["ID заказа"], row["ID материала"], row["Марка"], row["Толщина"],
-                         size_str, row["Зарезервировано штук"], row["Списано"], row["Остаток к списанию"], row["Дата резерва"]]
+                          size_str, row["Зарезервировано штук"], row["Списано"], row["Остаток к списанию"],
+                          row["Дата резерва"]]
                 self.reservations_tree.insert("", "end", values=values)
 
     def add_reservation(self):
@@ -898,7 +1149,7 @@ class ProductionApp:
             return
         add_window = tk.Toplevel(self.root)
         add_window.title("Создать резерв")
-        add_window.geometry("550x550")
+        add_window.geometry("550x600")
         add_window.configure(bg='#ecf0f1')
         tk.Label(add_window, text="Резервирование материала под заказ", font=("Arial", 12, "bold"), bg='#ecf0f1').pack(
             pady=10)
@@ -953,7 +1204,7 @@ class ProductionApp:
         # МАТЕРИАЛ С ПОИСКОМ
         material_frame = tk.Frame(add_window, bg='#ecf0f1')
         material_frame.pack(fill=tk.X, padx=20, pady=5)
-        tk.Label(material_frame, text="Материал:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
+        tk.Label(material_frame, text="Материал (поиск):", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
             side=tk.LEFT)
 
         materials_df = load_data("Materials")
@@ -1035,7 +1286,8 @@ class ProductionApp:
 
         def save_reservation():
             try:
-                if not order_var.get():
+                order_value = selected_order["value"] or order_search_var.get()
+                if not order_value:
                     messagebox.showwarning("Предупреждение", "Выберите заказ!")
                     return
 
@@ -1044,10 +1296,6 @@ class ProductionApp:
                     messagebox.showwarning("Предупреждение", "Выберите материал!")
                     return
 
-                order_value = selected_order["value"] or order_search_var.get()
-                if not order_value:
-                    messagebox.showwarning("Предупреждение", "Выберите заказ!")
-                    return
                 order_id = int(order_value.split(" - ")[0])
                 quantity = int(qty_entry.get())
 
@@ -1103,7 +1351,8 @@ class ProductionApp:
             messagebox.showwarning("Предупреждение", "Выберите резервы для удаления")
             return
         count = len(selected)
-        if messagebox.askyesno("Подтверждение", f"Удалить выбранные резервы ({count} шт)?\n\nМатериалы вернутся на склад!"):
+        if messagebox.askyesno("Подтверждение",
+                               f"Удалить выбранные резервы ({count} шт)?\n\nМатериалы вернутся на склад!"):
             reservations_df = load_data("Reservations")
             materials_df = load_data("Materials")
             for item in selected:
@@ -1114,8 +1363,10 @@ class ProductionApp:
                     quantity_to_return = int(reserve_row["Остаток к списанию"])
                     if not materials_df[materials_df["ID"] == material_id].empty:
                         mat_row = materials_df[materials_df["ID"] == material_id].iloc[0]
-                        materials_df.loc[materials_df["ID"] == material_id, "Зарезервировано"] = int(mat_row["Зарезервировано"]) - quantity_to_return
-                        materials_df.loc[materials_df["ID"] == material_id, "Доступно"] = int(mat_row["Доступно"]) + quantity_to_return
+                        materials_df.loc[materials_df["ID"] == material_id, "Зарезервировано"] = int(
+                            mat_row["Зарезервировано"]) - quantity_to_return
+                        materials_df.loc[materials_df["ID"] == material_id, "Доступно"] = int(
+                            mat_row["Доступно"]) + quantity_to_return
                 reservations_df = reservations_df[reservations_df["ID резерва"] != reserve_id]
             save_data("Reservations", reservations_df)
             save_data("Materials", materials_df)
@@ -1125,38 +1376,45 @@ class ProductionApp:
             messagebox.showinfo("Успех", f"Удалено резервов: {count}")
 
     def setup_writeoffs_tab(self):
-        header = tk.Label(self.writeoffs_frame, text="Списание зарезервированных материалов", font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
+        header = tk.Label(self.writeoffs_frame, text="Списание зарезервированных материалов",
+                          font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
         header.pack(pady=10)
         tree_frame = tk.Frame(self.writeoffs_frame, bg='white')
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
         scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
         self.writeoffs_tree = ttk.Treeview(tree_frame,
-            columns=("ID", "ID резерва", "Заказ", "Материал", "Марка", "Толщина", "Размер", "Количество", "Дата", "Комментарий"),
-            show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+                                           columns=("ID", "ID резерва", "Заказ", "Материал", "Марка", "Толщина",
+                                                    "Размер", "Количество", "Дата", "Комментарий"),
+                                           show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
         scroll_y.config(command=self.writeoffs_tree.yview)
         scroll_x.config(command=self.writeoffs_tree.xview)
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
         columns_config = {"ID": 50, "ID резерва": 80, "Заказ": 70, "Материал": 80, "Марка": 90, "Толщина": 70,
-            "Размер": 110, "Количество": 90, "Дата": 140, "Комментарий": 180}
+                          "Размер": 110, "Количество": 90, "Дата": 140, "Комментарий": 180}
         for col, width in columns_config.items():
             self.writeoffs_tree.heading(col, text=col)
             self.writeoffs_tree.column(col, width=width, anchor=tk.CENTER)
         self.writeoffs_tree.pack(fill=tk.BOTH, expand=True)
+
         # Панель фильтрации
         self.writeoffs_filters = self.create_filter_panel(
             self.writeoffs_frame,
             self.writeoffs_tree,
-            ["ID", "ID резерва", "Заказ", "Марка", "Т��лщина", "Количество"],
+            ["ID", "ID резерва", "Заказ", "Марка", "Толщина", "Количество"],
             self.refresh_writeoffs
         )
+
         buttons_frame = tk.Frame(self.writeoffs_frame, bg='white')
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
         btn_style = {"font": ("Arial", 10), "width": 18, "height": 2}
-        tk.Button(buttons_frame, text="Списать материал", bg='#e67e22', fg='white', command=self.add_writeoff, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Удалить списание", bg='#e74c3c', fg='white', command=self.delete_writeoff, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_writeoffs, **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Списать материал", bg='#e67e22', fg='white', command=self.add_writeoff,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Удалить списание", bg='#e74c3c', fg='white', command=self.delete_writeoff,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_writeoffs,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
         self.refresh_writeoffs()
 
     def refresh_writeoffs(self):
@@ -1167,7 +1425,7 @@ class ProductionApp:
             for index, row in df.iterrows():
                 size_str = f"{row['Ширина']}x{row['Длина']}"
                 values = [row["ID списания"], row["ID резерва"], row["ID заказа"], row["ID материала"], row["Марка"],
-                         row["Толщина"], size_str, row["Количество"], row["Дата списания"], row["Комментарий"]]
+                          row["Толщина"], size_str, row["Количество"], row["Дата списания"], row["Комментарий"]]
                 self.writeoffs_tree.insert("", "end", values=values)
 
     def add_writeoff(self):
@@ -1183,32 +1441,38 @@ class ProductionApp:
         add_window.title("Списать материал")
         add_window.geometry("600x450")
         add_window.configure(bg='#fff3e0')
-        tk.Label(add_window, text="Списание зарезервированного материала", font=("Arial", 12, "bold"), bg='#fff3e0', fg='#e67e22').pack(pady=10)
+        tk.Label(add_window, text="Списание зарезервированного материала", font=("Arial", 12, "bold"), bg='#fff3e0',
+                 fg='#e67e22').pack(pady=10)
         reserve_frame = tk.Frame(add_window, bg='#fff3e0')
         reserve_frame.pack(fill=tk.X, padx=20, pady=5)
-        tk.Label(reserve_frame, text="Резерв:", width=20, anchor='w', bg='#fff3e0', font=("Arial", 10)).pack(side=tk.LEFT)
+        tk.Label(reserve_frame, text="Резерв:", width=20, anchor='w', bg='#fff3e0', font=("Arial", 10)).pack(
+            side=tk.LEFT)
         reserve_options = []
         for _, row in available_reserves.iterrows():
             reserve_text = f"ID:{int(row['ID резерва'])} | Заказ:{int(row['ID заказа'])} | {row['Марка']} {row['Толщина']}мм {row['Ширина']}x{row['Длина']} | Доступно:{int(row['Остаток к списанию'])} шт"
             reserve_options.append(reserve_text)
         reserve_var = tk.StringVar()
-        reserve_combo = ttk.Combobox(reserve_frame, textvariable=reserve_var, values=reserve_options, font=("Arial", 9), state="readonly", width=60)
+        reserve_combo = ttk.Combobox(reserve_frame, textvariable=reserve_var, values=reserve_options, font=("Arial", 9),
+                                     state="readonly", width=60)
         reserve_combo.pack(side=tk.RIGHT, expand=True, fill=tk.X)
         if reserve_options:
             reserve_combo.current(0)
         qty_frame = tk.Frame(add_window, bg='#fff3e0')
         qty_frame.pack(fill=tk.X, padx=20, pady=5)
-        tk.Label(qty_frame, text="Количество (шт):", width=20, anchor='w', bg='#fff3e0', font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+        tk.Label(qty_frame, text="Количество (шт):", width=20, anchor='w', bg='#fff3e0',
+                 font=("Arial", 10, "bold")).pack(side=tk.LEFT)
         qty_entry = tk.Entry(qty_frame, font=("Arial", 10))
         qty_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
         comment_frame = tk.Frame(add_window, bg='#fff3e0')
         comment_frame.pack(fill=tk.X, padx=20, pady=5)
-        tk.Label(comment_frame, text="Комментарий:", width=20, anchor='w', bg='#fff3e0', font=("Arial", 10)).pack(side=tk.LEFT)
+        tk.Label(comment_frame, text="Комментарий:", width=20, anchor='w', bg='#fff3e0', font=("Arial", 10)).pack(
+            side=tk.LEFT)
         comment_entry = tk.Entry(comment_frame, font=("Arial", 10))
         comment_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
         info_label = tk.Label(add_window, text="⚠ Списание уменьшит резерв и количество материала на складе!",
-                             font=("Arial", 9, "italic"), bg='#fff3e0', fg='#d35400')
+                              font=("Arial", 9, "italic"), bg='#fff3e0', fg='#d35400')
         info_label.pack(pady=10)
+
         def save_writeoff():
             try:
                 if not reserve_var.get():
@@ -1223,7 +1487,8 @@ class ProductionApp:
                     messagebox.showerror("Ошибка", "Количество должно быть больше нуля!")
                     return
                 if quantity > available_qty:
-                    messagebox.showerror("Ошибка", f"Недостаточно зарезервированного материала!\nДоступно: {available_qty} шт\nЗапрошено: {quantity} шт")
+                    messagebox.showerror("Ошибка",
+                                         f"Недостаточно зарезервированного материала!\nДоступно: {available_qty} шт\nЗапрошено: {quantity} шт")
                     return
                 writeoffs_df = load_data("WriteOffs")
                 new_id = 1 if writeoffs_df.empty else int(writeoffs_df["ID списания"].max()) + 1
@@ -1242,8 +1507,10 @@ class ProductionApp:
                 }])
                 writeoffs_df = pd.concat([writeoffs_df, new_row], ignore_index=True)
                 save_data("WriteOffs", writeoffs_df)
-                reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Списано"] = int(reserve_row["Списано"]) + quantity
-                reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Остаток к списанию"] = available_qty - quantity
+                reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Списано"] = int(
+                    reserve_row["Списано"]) + quantity
+                reservations_df.loc[
+                    reservations_df["ID резерва"] == reserve_id, "Остаток к списанию"] = available_qty - quantity
                 save_data("Reservations", reservations_df)
                 material_id = reserve_row["ID материала"]
                 if material_id != -1:
@@ -1265,12 +1532,15 @@ class ProductionApp:
                 self.refresh_writeoffs()
                 self.refresh_balance()
                 add_window.destroy()
-                messagebox.showinfo("Успех", f"Списание #{new_id} успешно выполнено!\n\nСписано: {quantity} шт\nОстаток в резерве: {available_qty - quantity} шт")
+                messagebox.showinfo("Успех",
+                                    f"Списание #{new_id} успешно выполнено!\n\nСписано: {quantity} шт\nОстаток в резерве: {available_qty - quantity} шт")
             except ValueError:
                 messagebox.showerror("Ошибка", "Количество должно быть числом!")
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось выполнить списание: {e}")
-        tk.Button(add_window, text="Списать", bg='#e67e22', fg='white', font=("Arial", 12, "bold"), command=save_writeoff).pack(pady=15)
+
+        tk.Button(add_window, text="Списать", bg='#e67e22', fg='white', font=("Arial", 12, "bold"),
+                  command=save_writeoff).pack(pady=15)
 
     def delete_writeoff(self):
         selected = self.writeoffs_tree.selection()
@@ -1278,7 +1548,8 @@ class ProductionApp:
             messagebox.showwarning("Предупреждение", "Выберите списания для удаления")
             return
         count = len(selected)
-        if messagebox.askyesno("Подтверждение", f"Удалить выбранные списания ({count} шт)?\n\nВнимание: Материал вернется в резерв и на склад!"):
+        if messagebox.askyesno("Подтверждение",
+                               f"Удалить выбранные списания ({count} шт)?\n\nВнимание: Материал вернется в резерв и на склад!"):
             writeoffs_df = load_data("WriteOffs")
             reservations_df = load_data("Reservations")
             materials_df = load_data("Materials")
@@ -1290,8 +1561,10 @@ class ProductionApp:
                 quantity_to_return = int(writeoff_row["Количество"])
                 if not reservations_df[reservations_df["ID резерва"] == reserve_id].empty:
                     res_row = reservations_df[reservations_df["ID резерва"] == reserve_id].iloc[0]
-                    reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Списано"] = int(res_row["Списано"]) - quantity_to_return
-                    reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Остаток к списанию"] = int(res_row["Остаток к списанию"]) + quantity_to_return
+                    reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Списано"] = int(
+                        res_row["Списано"]) - quantity_to_return
+                    reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Остаток к списанию"] = int(
+                        res_row["Остаток к списанию"]) + quantity_to_return
                 if material_id != -1:
                     if not materials_df[materials_df["ID"] == material_id].empty:
                         mat_row = materials_df[materials_df["ID"] == material_id].iloc[0]
@@ -1315,28 +1588,34 @@ class ProductionApp:
             messagebox.showinfo("Успех", f"Отменено списаний: {count}")
 
     def setup_balance_tab(self):
-        header = tk.Label(self.balance_frame, text="Баланс материалов", font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
+        header = tk.Label(self.balance_frame, text="Баланс материалов", font=("Arial", 16, "bold"), bg='white',
+                          fg='#2c3e50')
         header.pack(pady=10)
         info_label = tk.Label(self.balance_frame, text="Красный - не хватает | Желтый - на нуле | Зеленый - в наличии",
-                             font=("Arial", 10), bg='white', fg='#7f8c8d')
+                              font=("Arial", 10), bg='white', fg='#7f8c8d')
         info_label.pack(pady=5)
         tree_frame = tk.Frame(self.balance_frame, bg='white')
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
         scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
         self.balance_tree = ttk.Treeview(tree_frame,
-            columns=("Материал", "Марка", "Толщина", "Размер", "В наличии", "Зарезервировано", "Итого"),
-            show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+                                         columns=("Материал", "Марка", "Толщина", "Размер", "В наличии",
+                                                  "Зарезервировано", "Итого"),
+                                         show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
         scroll_y.config(command=self.balance_tree.yview)
         scroll_x.config(command=self.balance_tree.xview)
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
         columns_config = {"Материал": 100, "Марка": 120, "Толщина": 100, "Размер": 150,
-            "В наличии": 100, "Зарезервировано": 130, "Итого": 100}
+                          "В наличии": 100, "Зарезервировано": 130, "Итого": 100}
         for col, width in columns_config.items():
             self.balance_tree.heading(col, text=col)
             self.balance_tree.column(col, width=width, anchor=tk.CENTER)
         self.balance_tree.pack(fill=tk.BOTH, expand=True)
+        self.balance_tree.tag_configure('negative', background='#ffcccc')
+        self.balance_tree.tag_configure('zero', background='#fff9c4')
+        self.balance_tree.tag_configure('positive', background='#c8e6c9')
+
         # Панель фильтрации
         self.balance_filters = self.create_filter_panel(
             self.balance_frame,
@@ -1344,13 +1623,23 @@ class ProductionApp:
             ["Марка", "Толщина", "Размер", "В наличии", "Зарезервировано"],
             self.refresh_balance
         )
-        self.balance_tree.tag_configure('negative', background='#ffcccc')
-        self.balance_tree.tag_configure('zero', background='#fff9c4')
-        self.balance_tree.tag_configure('positive', background='#c8e6c9')
+
+        # Переключатели видимости
+        self.balance_toggles = self.create_visibility_toggles(
+            self.balance_frame,
+            self.balance_tree,
+            {
+                'show_zero_balance': '0️⃣ Показать нулевой баланс',
+                'show_negative': '⚠️ Показать отрицательный баланс'
+            },
+            self.refresh_balance
+        )
+
         buttons_frame = tk.Frame(self.balance_frame, bg='white')
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
         btn_style = {"font": ("Arial", 10), "width": 15, "height": 2}
-        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_balance, **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_balance,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
         self.refresh_balance()
 
     def refresh_balance(self):
@@ -1359,11 +1648,14 @@ class ProductionApp:
         materials_df = load_data("Materials")
         reservations_df = load_data("Reservations")
         balance_dict = {}
+
         if not materials_df.empty:
             for index, row in materials_df.iterrows():
                 key = (row["Марка"], float(row["Толщина"]), float(row["Длина"]), float(row["Ширина"]))
                 if key not in balance_dict:
-                    balance_dict[key] = {"material_id": row["ID"], "in_stock": int(row["Количество штук"]), "reserved": 0}
+                    balance_dict[key] = {"material_id": row["ID"], "in_stock": int(row["Количество штук"]),
+                                         "reserved": 0}
+
         if not reservations_df.empty:
             for index, row in reservations_df.iterrows():
                 key = (row["Марка"], float(row["Толщина"]), float(row["Длина"]), float(row["Ширина"]))
@@ -1372,22 +1664,39 @@ class ProductionApp:
                     balance_dict[key] = {"material_id": -1, "in_stock": 0, "reserved": reserved_qty}
                 else:
                     balance_dict[key]["reserved"] += reserved_qty
+
+        show_zero = True
+        show_negative = True
+
+        if hasattr(self, 'balance_toggles') and self.balance_toggles:
+            show_zero = self.balance_toggles.get('show_zero_balance', tk.BooleanVar(value=True)).get()
+            show_negative = self.balance_toggles.get('show_negative', tk.BooleanVar(value=True)).get()
+
         for key, data in sorted(balance_dict.items()):
             marka, thickness, length, width = key
             in_stock = data["in_stock"]
             reserved = data["reserved"]
             total = in_stock - reserved
+
+            if not show_zero and total == 0:
+                continue
+            if not show_negative and total < 0:
+                continue
+
             size_str = f"{width} x {length}"
             material_id = data["material_id"]
             material_label = f"ID: {material_id}" if material_id != -1 else "Вручную"
             values = [material_label, marka, f"{thickness} мм", size_str, in_stock, reserved, total]
+
             if total < 0:
                 tag = 'negative'
             elif total == 0:
                 tag = 'zero'
             else:
                 tag = 'positive'
+
             self.balance_tree.insert("", "end", values=values, tags=(tag,))
+
 
 if __name__ == "__main__":
     try:
@@ -1398,5 +1707,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Критическая ошибка: {e}")
         import traceback
+
         traceback.print_exc()
-        messagebox.showerror("Критическая ошибка", str(e))
+        messagebox.showerror("Критиче��кая ошибка", str(e))
