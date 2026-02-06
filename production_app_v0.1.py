@@ -20,14 +20,11 @@ def initialize_database():
             "Количество штук", "Общая площадь", "Зарезервировано", "Доступно", "Дата добавления"
         ])
         orders_sheet = wb.create_sheet("Orders")
-        orders_sheet.append(["ID заказа", "Название заказа", "Заказчик", "��ата создания", "Статус", "Примечания"])
+        orders_sheet.append(["ID заказа", "Название заказа", "Заказчик", "Дата создания", "Статус", "Примечания"])
         order_details_sheet = wb.create_sheet("OrderDetails")
         order_details_sheet.append(["ID", "ID заказа", "Название детали", "Количество"])
         reservations_sheet = wb.create_sheet("Reservations")
-        reservations_sheet.append([
-            "ID резерва", "ID заказа", "ID материала", "Марка", "Толщина", "Длина", "Ширина",
-            "Зарезервировано штук", "Списано", "Остаток к списанию", "Дата резерва"
-        ])
+        reservations_sheet.append(["ID резерва", "ID заказа", "ID детали", "Название детали", "ID материала", "Марка", "Толщина", "Длина", "Ширина", "Зарезервировано штук", "Списано", "Остаток к списанию", "Дата резерва"])
         writeoffs_sheet = wb.create_sheet("WriteOffs")
         writeoffs_sheet.append([
             "ID списания", "ID резерва", "ID заказа", "ID материала", "Марка", "Толщина", "Длина", "Ширина",
@@ -1128,8 +1125,8 @@ class ProductionApp:
         scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
         scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
         self.reservations_tree = ttk.Treeview(tree_frame,
-                                              columns=("ID", "Заказ", "Материал", "Марка", "Толщина", "Размер",
-                                                       "Резерв", "Списано", "Остаток", "Дата"),
+                                              columns=("ID", "Заказ", "Деталь", "Материал", "Марка", "Толщина",
+                                                       "Размер", "Резерв", "Списано", "Остаток", "Дата"),
                                               show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
         scroll_y.config(command=self.reservations_tree.yview)
         scroll_x.config(command=self.reservations_tree.xview)
@@ -1144,7 +1141,7 @@ class ProductionApp:
         self.reservations_filters = self.create_filter_panel(
             self.reservations_frame,
             self.reservations_tree,
-            ["ID", "Заказ", "Марка", "Толщина", "Резерв", "Списано", "Остаток"],
+            ["ID", "Заказ", "Деталь", "Марка", "Толщина", "Резерв", "Списано", "Остаток"],
             self.refresh_reservations
         )
 
@@ -1186,9 +1183,10 @@ class ProductionApp:
                     continue
 
                 size_str = f"{row['Ширина']}x{row['Длина']}"
-                values = [row["ID резерва"], row["ID заказа"], row["ID материала"], row["Марка"], row["Толщина"],
-                          size_str, row["Зарезервировано штук"], row["Списано"], row["Остаток к списанию"],
-                          row["Дата резерва"]]
+                detail_name = row.get("Название детали", "Не указана") if "Название детали" in row else "Не указана"
+                values = [row["ID резерва"], row["ID заказа"], detail_name, row["ID материала"],
+                          row["Марка"], row["Толщина"], size_str, row["Зарезервировано штук"],
+                          row["Списано"], row["Остаток к списанию"], row["Дата резерва"]]
                 self.reservations_tree.insert("", "end", values=values)
                 self.auto_resize_columns(self.reservations_tree)
 
@@ -1197,9 +1195,10 @@ class ProductionApp:
         if orders_df.empty:
             messagebox.showwarning("Предупреждение", "Сначала создайте заказы!")
             return
+
         add_window = tk.Toplevel(self.root)
         add_window.title("Создать резерв")
-        add_window.geometry("550x600")
+        add_window.geometry("550x750")
         add_window.configure(bg='#ecf0f1')
         tk.Label(add_window, text="Резервирование материала под заказ", font=("Arial", 12, "bold"), bg='#ecf0f1').pack(
             pady=10)
@@ -1207,8 +1206,7 @@ class ProductionApp:
         # ЗАКАЗ С ПОИСКОМ
         order_frame = tk.Frame(add_window, bg='#ecf0f1')
         order_frame.pack(fill=tk.X, padx=20, pady=5)
-        tk.Label(order_frame, text="Заказ (поиск):", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
-            side=tk.LEFT)
+        tk.Label(order_frame, text="Заказ:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
 
         all_order_options = [f"{int(row['ID заказа'])} - {row['Название заказа']}" for _, row in orders_df.iterrows()]
 
@@ -1216,12 +1214,11 @@ class ProductionApp:
         order_search_entry = tk.Entry(order_frame, textvariable=order_search_var, font=("Arial", 10), width=35)
         order_search_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
 
-        # Listbox для заказов
         order_results_frame = tk.Frame(add_window, bg='#ecf0f1')
         order_results_frame.pack(fill=tk.X, padx=20, pady=5)
 
         order_scroll = tk.Scrollbar(order_results_frame, orient=tk.VERTICAL)
-        order_listbox = tk.Listbox(order_results_frame, height=4, font=("Arial", 9),
+        order_listbox = tk.Listbox(order_results_frame, height=3, font=("Arial", 9),
                                    yscrollcommand=order_scroll.set)
         order_scroll.config(command=order_listbox.yview)
         order_scroll.pack(side=tk.RIGHT, fill=tk.Y)
@@ -1244,6 +1241,7 @@ class ProductionApp:
                 selection = order_listbox.get(order_listbox.curselection())
                 selected_order["value"] = selection
                 order_search_var.set(selection)
+                update_details_list()
             except:
                 pass
 
@@ -1251,10 +1249,69 @@ class ProductionApp:
         order_listbox.bind('<<ListboxSelect>>', on_select_order)
         order_listbox.bind('<Double-Button-1>', on_select_order)
 
+        # ДЕТАЛЬ ЗАКАЗА
+        detail_frame = tk.Frame(add_window, bg='#ecf0f1')
+        detail_frame.pack(fill=tk.X, padx=20, pady=5)
+        tk.Label(detail_frame, text="Деталь заказа:", width=20, anchor='w', bg='#ecf0f1',
+                 font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+
+        detail_var = tk.StringVar()
+        detail_combo = ttk.Combobox(detail_frame, textvariable=detail_var, font=("Arial", 10), state="readonly",
+                                    width=35)
+        detail_combo.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
+        selected_detail = {"id": None, "name": None}
+
+        def update_details_list():
+            detail_combo['values'] = []
+            detail_var.set("")
+            selected_detail["id"] = None
+            selected_detail["name"] = None
+
+            if not selected_order["value"]:
+                return
+
+            try:
+                order_id = int(selected_order["value"].split(" - ")[0])
+                order_details_df = load_data("OrderDetails")
+
+                if not order_details_df.empty:
+                    details = order_details_df[order_details_df["ID заказа"] == order_id]
+
+                    if not details.empty:
+                        detail_options = ["[Без привязки к детали]"]
+                        detail_options.extend([f"ID:{int(row['ID'])} - {row['Название детали']}"
+                                               for _, row in details.iterrows()])
+                        detail_combo['values'] = detail_options
+                        detail_combo.current(0)
+                    else:
+                        detail_combo['values'] = ["[Нет деталей у заказа]"]
+                        detail_combo.current(0)
+                else:
+                    detail_combo['values'] = ["[Нет деталей у заказа]"]
+                    detail_combo.current(0)
+            except:
+                pass
+
+        def on_detail_select(event):
+            value = detail_var.get()
+            if value and value.startswith("ID:"):
+                try:
+                    selected_detail["id"] = int(value.split("ID:")[1].split(" - ")[0])
+                    selected_detail["name"] = value.split(" - ")[1]
+                except:
+                    selected_detail["id"] = None
+                    selected_detail["name"] = None
+            else:
+                selected_detail["id"] = None
+                selected_detail["name"] = None
+
+        detail_combo.bind('<<ComboboxSelected>>', on_detail_select)
+
         # МАТЕРИАЛ С ПОИСКОМ
         material_frame = tk.Frame(add_window, bg='#ecf0f1')
         material_frame.pack(fill=tk.X, padx=20, pady=5)
-        tk.Label(material_frame, text="Материал (поиск):", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
+        tk.Label(material_frame, text="Материал:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
             side=tk.LEFT)
 
         materials_df = load_data("Materials")
@@ -1264,7 +1321,6 @@ class ProductionApp:
                                             f"{int(row['ID'])} - {row['Марка']} {row['Толщина']}мм {row['Ширина']}x{row['Длина']} (доступно: {int(row['Доступно'])} шт)"
                                             for _, row in materials_df.iterrows()])
 
-        # Поле поиска материала
         search_container = tk.Frame(material_frame, bg='#ecf0f1')
         search_container.pack(side=tk.RIGHT, expand=True, fill=tk.X)
 
@@ -1272,25 +1328,22 @@ class ProductionApp:
         material_search_entry = tk.Entry(search_container, textvariable=material_search_var, font=("Arial", 10))
         material_search_entry.pack(fill=tk.X)
 
-        # Listbox для результатов поиска
         search_results_frame = tk.Frame(add_window, bg='#ecf0f1')
         search_results_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
 
         scroll_results = tk.Scrollbar(search_results_frame, orient=tk.VERTICAL)
-        results_listbox = tk.Listbox(search_results_frame, height=6, font=("Arial", 9),
+        results_listbox = tk.Listbox(search_results_frame, height=5, font=("Arial", 9),
                                      yscrollcommand=scroll_results.set)
         scroll_results.config(command=results_listbox.yview)
         scroll_results.pack(side=tk.RIGHT, fill=tk.Y)
         results_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Заполняем изначально всеми материалами
         for option in all_material_options:
             results_listbox.insert(tk.END, option)
 
         selected_material = {"value": None}
 
         def on_search_change(*args):
-            """Фильтрация списка материалов при вводе"""
             search_text = material_search_var.get().lower()
             results_listbox.delete(0, tk.END)
 
@@ -1299,7 +1352,6 @@ class ProductionApp:
                     results_listbox.insert(tk.END, option)
 
         def on_select_material(event):
-            """Выбор материала из списка"""
             try:
                 selection = results_listbox.get(results_listbox.curselection())
                 selected_material["value"] = selection
@@ -1349,6 +1401,10 @@ class ProductionApp:
                 order_id = int(order_value.split(" - ")[0])
                 quantity = int(qty_entry.get())
 
+                # Получаем ID и название детали
+                detail_id = selected_detail["id"] if selected_detail["id"] else -1
+                detail_name = selected_detail["name"] if selected_detail["name"] else "Не указана"
+
                 if material_value == "[Добавить вручную]":
                     marka = manual_entries["marka"].get().strip()
                     thickness = float(manual_entries["thickness"].get().strip())
@@ -1368,10 +1424,23 @@ class ProductionApp:
 
                 reservations_df = load_data("Reservations")
                 new_id = 1 if reservations_df.empty else int(reservations_df["ID резерва"].max()) + 1
-                new_row = pd.DataFrame([{"ID резерва": new_id, "ID заказа": order_id, "ID материала": material_id,
-                                         "Марка": marka, "Толщина": thickness, "Длина": length, "Ширина": width,
-                                         "Зарезервировано штук": quantity, "Списано": 0, "Остаток к списанию": quantity,
-                                         "Дата резерва": datetime.now().strftime("%Y-%m-%d")}])
+
+                new_row = pd.DataFrame([{
+                    "ID резерва": new_id,
+                    "ID заказа": order_id,
+                    "ID детали": detail_id,
+                    "Название детали": detail_name,
+                    "ID материала": material_id,
+                    "Марка": marka,
+                    "Толщина": thickness,
+                    "Длина": length,
+                    "Ширина": width,
+                    "Зарезервировано штук": quantity,
+                    "Списано": 0,
+                    "Остаток к списанию": quantity,
+                    "Дата резерва": datetime.now().strftime("%Y-%m-%d")
+                }])
+
                 reservations_df = pd.concat([reservations_df, new_row], ignore_index=True)
                 save_data("Reservations", reservations_df)
 
@@ -1386,7 +1455,10 @@ class ProductionApp:
                 self.refresh_reservations()
                 self.refresh_balance()
                 add_window.destroy()
-                messagebox.showinfo("Успех", f"Резерв #{new_id} успешно создан!")
+
+                detail_info = f"\nДеталь: {detail_name}" if detail_name != "Не указана" else ""
+                messagebox.showinfo("Успех", f"✅ Резерв #{new_id} успешно создан!{detail_info}")
+
             except ValueError:
                 messagebox.showerror("Ошибка", "Проверьте правильность ввода числовых значений!")
             except Exception as e:
