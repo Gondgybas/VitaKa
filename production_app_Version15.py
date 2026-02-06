@@ -898,32 +898,88 @@ class ProductionApp:
             return
         add_window = tk.Toplevel(self.root)
         add_window.title("Создать резерв")
-        add_window.geometry("550x500")
+        add_window.geometry("550x550")
         add_window.configure(bg='#ecf0f1')
-        tk.Label(add_window, text="Резервирование материала под заказ", font=("Arial", 12, "bold"), bg='#ecf0f1').pack(pady=10)
+        tk.Label(add_window, text="Резервирование материала под заказ", font=("Arial", 12, "bold"), bg='#ecf0f1').pack(
+            pady=10)
+
+        # ЗАКАЗ
         order_frame = tk.Frame(add_window, bg='#ecf0f1')
         order_frame.pack(fill=tk.X, padx=20, pady=5)
         tk.Label(order_frame, text="Заказ:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
         order_options = [f"{int(row['ID заказа'])} - {row['Название заказа']}" for _, row in orders_df.iterrows()]
         order_var = tk.StringVar()
-        order_combo = ttk.Combobox(order_frame, textvariable=order_var, values=order_options, font=("Arial", 10), state="readonly", width=35)
+        order_combo = ttk.Combobox(order_frame, textvariable=order_var, values=order_options, font=("Arial", 10),
+                                   state="readonly", width=35)
         order_combo.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
+        # МАТЕРИАЛ С ПОИСКОМ
         material_frame = tk.Frame(add_window, bg='#ecf0f1')
         material_frame.pack(fill=tk.X, padx=20, pady=5)
-        tk.Label(material_frame, text="Материал:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
+        tk.Label(material_frame, text="Материал:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
+            side=tk.LEFT)
+
         materials_df = load_data("Materials")
-        material_options = ["[Добавить вручную]"]
+        all_material_options = ["[Добавить вручную]"]
         if not materials_df.empty:
-            material_options.extend([f"{int(row['ID'])} - {row['Марка']} {row['Толщина']}мм {row['Ширина']}x{row['Длина']} (доступно: {int(row['Доступно'])} шт)"
-                           for _, row in materials_df.iterrows()])
-        material_var = tk.StringVar()
-        material_combo = ttk.Combobox(material_frame, textvariable=material_var, values=material_options, font=("Arial", 10), state="readonly", width=35)
-        material_combo.pack(side=tk.RIGHT, expand=True, fill=tk.X)
-        material_combo.current(0)
-        manual_frame = tk.LabelFrame(add_window, text="Параметры материала (для ручного ввода)", bg='#ecf0f1', font=("Arial", 10, "bold"))
+            all_material_options.extend([
+                                            f"{int(row['ID'])} - {row['Марка']} {row['Толщина']}мм {row['Ширина']}x{row['Длина']} (доступно: {int(row['Доступно'])} шт)"
+                                            for _, row in materials_df.iterrows()])
+
+        # Поле поиска материала
+        search_container = tk.Frame(material_frame, bg='#ecf0f1')
+        search_container.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
+        material_search_var = tk.StringVar()
+        material_search_entry = tk.Entry(search_container, textvariable=material_search_var, font=("Arial", 10))
+        material_search_entry.pack(fill=tk.X)
+
+        # Listbox для результатов поиска
+        search_results_frame = tk.Frame(add_window, bg='#ecf0f1')
+        search_results_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
+
+        scroll_results = tk.Scrollbar(search_results_frame, orient=tk.VERTICAL)
+        results_listbox = tk.Listbox(search_results_frame, height=6, font=("Arial", 9),
+                                     yscrollcommand=scroll_results.set)
+        scroll_results.config(command=results_listbox.yview)
+        scroll_results.pack(side=tk.RIGHT, fill=tk.Y)
+        results_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Заполняем изначально всеми материалами
+        for option in all_material_options:
+            results_listbox.insert(tk.END, option)
+
+        selected_material = {"value": None}
+
+        def on_search_change(*args):
+            """Фильтрация списка материалов при вводе"""
+            search_text = material_search_var.get().lower()
+            results_listbox.delete(0, tk.END)
+
+            for option in all_material_options:
+                if search_text in option.lower():
+                    results_listbox.insert(tk.END, option)
+
+        def on_select_material(event):
+            """Выбор материала из списка"""
+            try:
+                selection = results_listbox.get(results_listbox.curselection())
+                selected_material["value"] = selection
+                material_search_var.set(selection)
+            except:
+                pass
+
+        material_search_var.trace('w', on_search_change)
+        results_listbox.bind('<<ListboxSelect>>', on_select_material)
+        results_listbox.bind('<Double-Button-1>', on_select_material)
+
+        # ПАРАМЕТРЫ МАТЕРИАЛА (ручной ввод)
+        manual_frame = tk.LabelFrame(add_window, text="Параметры материала (для ручного ввода)", bg='#ecf0f1',
+                                     font=("Arial", 10, "bold"))
         manual_frame.pack(fill=tk.X, padx=20, pady=10)
         manual_entries = {}
-        manual_fields = [("Марка стали:", "marka"), ("Толщина (мм):", "thickness"), ("Длина (мм):", "length"), ("Ширина (мм):", "width")]
+        manual_fields = [("Марка стали:", "marka"), ("Толщина (мм):", "thickness"), ("Длина (мм):", "length"),
+                         ("Ширина (мм):", "width")]
         for label_text, key in manual_fields:
             frame = tk.Frame(manual_frame, bg='#ecf0f1')
             frame.pack(fill=tk.X, padx=10, pady=3)
@@ -931,22 +987,30 @@ class ProductionApp:
             entry = tk.Entry(frame, font=("Arial", 9))
             entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
             manual_entries[key] = entry
+
+        # КОЛИЧЕСТВО
         qty_frame = tk.Frame(add_window, bg='#ecf0f1')
         qty_frame.pack(fill=tk.X, padx=20, pady=5)
-        tk.Label(qty_frame, text="Количество (шт):", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+        tk.Label(qty_frame, text="Количество (шт):", width=20, anchor='w', bg='#ecf0f1',
+                 font=("Arial", 10, "bold")).pack(side=tk.LEFT)
         qty_entry = tk.Entry(qty_frame, font=("Arial", 10))
         qty_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
         def save_reservation():
             try:
                 if not order_var.get():
                     messagebox.showwarning("Предупреждение", "Выберите заказ!")
                     return
-                if not material_var.get():
+
+                material_value = selected_material["value"] or material_search_var.get()
+                if not material_value:
                     messagebox.showwarning("Предупреждение", "Выберите материал!")
                     return
+
                 order_id = int(order_var.get().split(" - ")[0])
                 quantity = int(qty_entry.get())
-                if material_var.get() == "[Добавить вручную]":
+
+                if material_value == "[Добавить вручную]":
                     marka = manual_entries["marka"].get().strip()
                     thickness = float(manual_entries["thickness"].get().strip())
                     length = float(manual_entries["length"].get().strip())
@@ -956,25 +1020,30 @@ class ProductionApp:
                         return
                     material_id = -1
                 else:
-                    material_id = int(material_var.get().split(" - ")[0])
+                    material_id = int(material_value.split(" - ")[0])
                     material_row = materials_df[materials_df["ID"] == material_id].iloc[0]
                     marka = material_row["Марка"]
                     thickness = material_row["Толщина"]
                     length = material_row["Длина"]
                     width = material_row["Ширина"]
+
                 reservations_df = load_data("Reservations")
                 new_id = 1 if reservations_df.empty else int(reservations_df["ID резерва"].max()) + 1
                 new_row = pd.DataFrame([{"ID резерва": new_id, "ID заказа": order_id, "ID материала": material_id,
-                    "Марка": marka, "Толщина": thickness, "Длина": length, "Ширина": width,
-                    "Зарезервировано штук": quantity, "Списано": 0, "Остаток к списанию": quantity,
-                    "Дата резерва": datetime.now().strftime("%Y-%m-%d")}])
+                                         "Марка": marka, "Толщина": thickness, "Длина": length, "Ширина": width,
+                                         "Зарезервировано штук": quantity, "Списано": 0, "Остаток к списанию": quantity,
+                                         "Дата резерва": datetime.now().strftime("%Y-%m-%d")}])
                 reservations_df = pd.concat([reservations_df, new_row], ignore_index=True)
                 save_data("Reservations", reservations_df)
+
                 if material_id != -1:
-                    materials_df.loc[materials_df["ID"] == material_id, "Зарезервировано"] = int(material_row["Зарезервировано"]) + quantity
-                    materials_df.loc[materials_df["ID"] == material_id, "Доступно"] = int(material_row["Доступно"]) - quantity
+                    materials_df.loc[materials_df["ID"] == material_id, "Зарезервировано"] = int(
+                        material_row["Зарезервировано"]) + quantity
+                    materials_df.loc[materials_df["ID"] == material_id, "Доступно"] = int(
+                        material_row["Доступно"]) - quantity
                     save_data("Materials", materials_df)
                     self.refresh_materials()
+
                 self.refresh_reservations()
                 self.refresh_balance()
                 add_window.destroy()
@@ -983,7 +1052,9 @@ class ProductionApp:
                 messagebox.showerror("Ошибка", "Проверьте правильность ввода числовых значений!")
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось создать резерв: {e}")
-        tk.Button(add_window, text="Зарезервировать", bg='#27ae60', fg='white', font=("Arial", 12, "bold"), command=save_reservation).pack(pady=15)
+
+        tk.Button(add_window, text="Зарезервировать", bg='#27ae60', fg='white', font=("Arial", 12, "bold"),
+                  command=save_reservation).pack(pady=15)
 
     def delete_reservation(self):
         selected = self.reservations_tree.selection()
