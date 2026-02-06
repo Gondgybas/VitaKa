@@ -86,6 +86,99 @@ class ProductionApp:
         self.notebook.add(self.balance_frame, text='Баланс материалов')
         self.setup_balance_tab()
 
+    def create_filter_panel(self, parent_frame, tree_widget, columns_to_filter, refresh_callback):
+        """Создание панели фильтрации для любой таблицы"""
+        filter_frame = tk.LabelFrame(parent_frame, text="🔍 Фильтры", bg='#e8f4f8', font=("Arial", 10, "bold"))
+        filter_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        # Словарь для хранения Entry виджетов фильтров
+        filter_entries = {}
+
+        # Создаём поля фильтрации для каждой колонки
+        row = 0
+        col = 0
+        max_cols = 4  # Количество фильтров в одной строке
+
+        for column_name in columns_to_filter:
+            filter_container = tk.Frame(filter_frame, bg='#e8f4f8')
+            filter_container.grid(row=row, column=col, padx=5, pady=3, sticky='w')
+
+            tk.Label(filter_container, text=f"{column_name}:", bg='#e8f4f8', font=("Arial", 9)).pack(side=tk.LEFT)
+
+            entry = tk.Entry(filter_container, width=15, font=("Arial", 9))
+            entry.pack(side=tk.LEFT, padx=5)
+
+            filter_entries[column_name] = entry
+
+            # Привязываем событие изменения текста к функции фильтрации
+            entry.bind('<KeyRelease>', lambda e, tree=tree_widget, filters=filter_entries, cb=refresh_callback:
+            self.apply_filters(tree, filters, cb))
+
+            col += 1
+            if col >= max_cols:
+                col = 0
+                row += 1
+
+        # Кнопки управления фильтрами
+        buttons_container = tk.Frame(filter_frame, bg='#e8f4f8')
+        buttons_container.grid(row=row + 1, column=0, columnspan=max_cols, pady=5)
+
+        tk.Button(buttons_container, text="🗑️ Очистить фильтры", bg='#95a5a6', fg='white',
+                  font=("Arial", 9),
+                  command=lambda: self.clear_filters(filter_entries, tree_widget, refresh_callback)).pack(side=tk.LEFT,
+                                                                                                          padx=5)
+
+        tk.Button(buttons_container, text="🔄 Обновить", bg='#3498db', fg='white',
+                  font=("Arial", 9), command=refresh_callback).pack(side=tk.LEFT, padx=5)
+
+        return filter_entries
+
+    def apply_filters(self, tree, filter_entries, refresh_callback):
+        """Применить фильтры к таблице"""
+        # Собираем активные фильтры
+        active_filters = {}
+        for col_name, entry in filter_entries.items():
+            filter_text = entry.get().strip().lower()
+            if filter_text:
+                active_filters[col_name] = filter_text
+
+        # Если нет фильтров - показываем всё
+        if not active_filters:
+            refresh_callback()
+            return
+
+        # Сохраняем текущие данные
+        all_items = []
+        for item in tree.get_children():
+            all_items.append(tree.item(item)['values'])
+
+        # Очищаем таблицу
+        for item in tree.get_children():
+            tree.delete(item)
+
+        # Фильтруем и добавляем обратно
+        columns = tree['columns']
+        for item_values in all_items:
+            match = True
+            for col_name, filter_text in active_filters.items():
+                try:
+                    col_index = columns.index(col_name)
+                    cell_value = str(item_values[col_index]).lower()
+                    if filter_text not in cell_value:
+                        match = False
+                        break
+                except (ValueError, IndexError):
+                    continue
+
+            if match:
+                tree.insert("", "end", values=item_values)
+
+    def clear_filters(self, filter_entries, tree, refresh_callback):
+        """Очистить все фильтры"""
+        for entry in filter_entries.values():
+            entry.delete(0, tk.END)
+        refresh_callback()
+
     def setup_materials_tab(self):
         header = tk.Label(self.materials_frame, text="Учет листового проката на складе",
                          font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
@@ -107,6 +200,13 @@ class ProductionApp:
             self.materials_tree.heading(col, text=col)
             self.materials_tree.column(col, width=width, anchor=tk.CENTER)
         self.materials_tree.pack(fill=tk.BOTH, expand=True)
+        # Панель фильтрации
+        self.materials_filters = self.create_filter_panel(
+            self.materials_frame,
+            self.materials_tree,
+            ["ID", "Марка", "Толщина", "Длина", "Ширина", "Кол-во шт", "Резерв", "Доступно"],
+            self.refresh_materials
+        )
         buttons_frame = tk.Frame(self.materials_frame, bg='white')
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
         btn_style = {"font": ("Arial", 10), "width": 15, "height": 2}
@@ -339,6 +439,13 @@ class ProductionApp:
             self.orders_tree.heading(col, text=col)
             self.orders_tree.column(col, width=width, anchor=tk.CENTER)
         self.orders_tree.pack(fill=tk.BOTH, expand=True)
+        # Панель фильтрации заказов
+        self.orders_filters = self.create_filter_panel(
+            self.orders_frame,
+            self.orders_tree,
+            ["ID", "Название", "Заказчик", "Статус"],
+            self.refresh_orders
+        )
         self.orders_tree.bind('<<TreeviewSelect>>', self.on_order_select)
         buttons_frame = tk.Frame(self.orders_frame, bg='white')
         buttons_frame.pack(fill=tk.X, padx=10, pady=5)
@@ -362,6 +469,13 @@ class ProductionApp:
             self.order_details_tree.heading(col, text=col)
             self.order_details_tree.column(col, width=150, anchor=tk.CENTER)
         self.order_details_tree.pack(fill=tk.BOTH, expand=True)
+        # Панель фильтрации деталей
+        self.order_details_filters = self.create_filter_panel(
+            self.orders_frame,
+            self.order_details_tree,
+            ["Название детали", "Количество"],
+            self.refresh_order_details
+        )
         details_buttons_frame = tk.Frame(self.orders_frame, bg='white')
         details_buttons_frame.pack(fill=tk.X, padx=10, pady=5)
         tk.Button(details_buttons_frame, text="Добавить деталь", bg='#27ae60', fg='white', command=self.add_order_detail, **btn_style).pack(side=tk.LEFT, padx=5)
@@ -751,6 +865,13 @@ class ProductionApp:
             self.reservations_tree.heading(col, text=col)
             self.reservations_tree.column(col, width=110, anchor=tk.CENTER)
         self.reservations_tree.pack(fill=tk.BOTH, expand=True)
+        # Панель фильтрации
+        self.reservations_filters = self.create_filter_panel(
+            self.reservations_frame,
+            self.reservations_tree,
+            ["ID", "Заказ", "Марка", "Толщина", "Резерв", "Списано", "Остаток"],
+            self.refresh_reservations
+        )
         buttons_frame = tk.Frame(self.reservations_frame, bg='white')
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
         btn_style = {"font": ("Arial", 10), "width": 18, "height": 2}
@@ -911,6 +1032,13 @@ class ProductionApp:
             self.writeoffs_tree.heading(col, text=col)
             self.writeoffs_tree.column(col, width=width, anchor=tk.CENTER)
         self.writeoffs_tree.pack(fill=tk.BOTH, expand=True)
+        # Панель фильтрации
+        self.writeoffs_filters = self.create_filter_panel(
+            self.writeoffs_frame,
+            self.writeoffs_tree,
+            ["ID", "ID резерва", "Заказ", "Марка", "Т��лщина", "Количество"],
+            self.refresh_writeoffs
+        )
         buttons_frame = tk.Frame(self.writeoffs_frame, bg='white')
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
         btn_style = {"font": ("Arial", 10), "width": 18, "height": 2}
@@ -1097,6 +1225,13 @@ class ProductionApp:
             self.balance_tree.heading(col, text=col)
             self.balance_tree.column(col, width=width, anchor=tk.CENTER)
         self.balance_tree.pack(fill=tk.BOTH, expand=True)
+        # Панель фильтрации
+        self.balance_filters = self.create_filter_panel(
+            self.balance_frame,
+            self.balance_tree,
+            ["Марка", "Толщина", "Размер", "В наличии", "Зарезервировано"],
+            self.refresh_balance
+        )
         self.balance_tree.tag_configure('negative', background='#ffcccc')
         self.balance_tree.tag_configure('zero', background='#fff9c4')
         self.balance_tree.tag_configure('positive', background='#c8e6c9')
