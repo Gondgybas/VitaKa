@@ -191,6 +191,34 @@ class ProductionApp:
             entry.delete(0, tk.END)
         refresh_callback()
 
+        def auto_resize_columns(self, tree):
+            """Автоматическая подгонка ширины колонок по содержимому"""
+            for col in tree["columns"]:
+                max_width = len(col) * 10
+
+                tree.column(col, width=max_width)
+                tree.update_idletasks()
+
+                for item in tree.get_children():
+                    try:
+                        col_index = tree["columns"].index(col)
+                        cell_value = str(tree.item(item)['values'][col_index])
+                        cell_width = len(cell_value) * 8 + 20
+                        if cell_width > max_width:
+                            max_width = cell_width
+                    except:
+                        pass
+
+                max_width = min(max_width, 400)
+                max_width = max(max_width, 80)
+
+                tree.column(col, width=max_width)
+
+                max_width = min(max_width, 400)
+                max_width = max(max_width, 80)
+
+                tree.column(col, width=max_width)
+
     def create_visibility_toggles(self, parent_frame, tree_widget, toggle_options, refresh_callback):
         """Создание переключателей видимости для таблицы"""
         toggles_frame = tk.Frame(parent_frame, bg='#fff9e6')
@@ -216,6 +244,23 @@ class ProductionApp:
             cb.pack(side=tk.LEFT, padx=10)
 
         return toggle_vars
+
+    def auto_resize_columns(self, tree):
+        """Автоматическая подгонка ширины колонок"""
+        for col in tree["columns"]:
+            max_width = 100
+            for item in tree.get_children():
+                try:
+                    col_index = tree["columns"].index(col)
+                    cell_value = str(tree.item(item)['values'][col_index])
+                    cell_width = len(cell_value) * 8 + 20
+                    if cell_width > max_width:
+                        max_width = cell_width
+                except:
+                    pass
+            max_width = min(max_width, 400)
+            max_width = max(max_width, 80)
+            tree.column(col, width=max_width)
 
     def save_toggle_settings(self):
         """Сохранить настройки переключателей"""
@@ -371,6 +416,8 @@ class ProductionApp:
                           row["Количество штук"], row["Общая площадь"], row["Зарезервировано"],
                           row["Доступно"], row["Дата добавления"]]
                 self.materials_tree.insert("", "end", values=values)
+
+        self.auto_resize_columns(self.materials_tree)
 
     def download_template(self):
         file_path = filedialog.asksaveasfilename(title="Сохранить шаблон", defaultextension=".xlsx",
@@ -689,6 +736,7 @@ class ProductionApp:
                 values = [row["ID заказа"], row["Название заказа"], row["Заказчик"],
                           row["Дата создания"], row["Статус"], row["Примечания"]]
                 self.orders_tree.insert("", "end", values=values)
+                self.auto_resize_columns(self.orders_tree)
 
     def refresh_order_details(self):
         for i in self.order_details_tree.get_children():
@@ -702,6 +750,7 @@ class ProductionApp:
             order_details = df[df["ID заказа"] == order_id]
             for index, row in order_details.iterrows():
                 self.order_details_tree.insert("", "end", values=tuple(row))
+                self.auto_resize_columns(self.order_details_tree)
 
     def download_orders_template(self):
         file_path = filedialog.asksaveasfilename(title="Сохранить шаблон", defaultextension=".xlsx",
@@ -1141,6 +1190,7 @@ class ProductionApp:
                           size_str, row["Зарезервировано штук"], row["Списано"], row["Остаток к списанию"],
                           row["Дата резерва"]]
                 self.reservations_tree.insert("", "end", values=values)
+                self.auto_resize_columns(self.reservations_tree)
 
     def add_reservation(self):
         orders_df = load_data("Orders")
@@ -1427,6 +1477,7 @@ class ProductionApp:
                 values = [row["ID списания"], row["ID резерва"], row["ID заказа"], row["ID материала"], row["Марка"],
                           row["Толщина"], size_str, row["Количество"], row["Дата списания"], row["Комментарий"]]
                 self.writeoffs_tree.insert("", "end", values=values)
+                self.auto_resize_columns(self.writeoffs_tree)
 
     def add_writeoff(self):
         reservations_df = load_data("Reservations")
@@ -1696,6 +1747,7 @@ class ProductionApp:
                 tag = 'positive'
 
             self.balance_tree.insert("", "end", values=values, tags=(tag,))
+            self.auto_resize_columns(self.balance_tree)
 
 
 if __name__ == "__main__":
