@@ -1164,6 +1164,7 @@ class ProductionApp:
                   **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_reservations,
                   **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="📤 Экспорт для бота", bg='#16a085', fg='white', command=self.export_for_telegram_bot, **btn_style).pack(side=tk.LEFT, padx=5)
         self.refresh_reservations()
 
     def refresh_reservations(self):
@@ -1327,6 +1328,8 @@ class ProductionApp:
         material_search_var = tk.StringVar()
         material_search_entry = tk.Entry(search_container, textvariable=material_search_var, font=("Arial", 10))
         material_search_entry.pack(fill=tk.X)
+
+        selected_reserve = {"value": None}
 
         search_results_frame = tk.Frame(add_window, bg='#ecf0f1')
         search_results_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
@@ -1497,6 +1500,163 @@ class ProductionApp:
             self.refresh_balance()
             messagebox.showinfo("Успех", f"Удалено резервов: {count}")
 
+    def export_for_telegram_bot(self):
+        """Экспорт данных для Telegram-бота (Заказ | Деталь | Металл)"""
+        try:
+            # Загружаем данные
+            orders_df = load_data("Orders")
+            order_details_df = load_data("OrderDetails")
+            reservations_df = load_data("Reservations")
+
+            # Фильтруем заказы "В работе"
+            if orders_df.empty:
+                messagebox.showwarning("Предупреждение", "Нет заказов в базе!")
+                return
+
+            active_orders = orders_df[orders_df["Статус"] == "В работе"]
+
+            if active_orders.empty:
+                messagebox.showwarning("Предупреждение", "Нет заказов со статусом 'В работе'!")
+                return
+
+            # Формируем данные для экспорта
+            export_data = []
+
+            for _, order in active_orders.iterrows():
+                order_id = order["ID заказа"]
+                order_name = order["Название заказа"]
+
+                # Получаем детали этого заказа
+                if not order_details_df.empty:
+                    details = order_details_df[order_details_df["ID заказа"] == order_id]
+                else:
+                    details = pd.DataFrame()
+
+                # Получаем резервы этого заказа
+                if not reservations_df.empty:
+                    order_reservations = reservations_df[reservations_df["ID заказа"] == order_id]
+                else:
+                    order_reservations = pd.DataFrame()
+
+                if not details.empty:
+                    # Есть детали - формируем строки по деталям
+                    for _, detail in details.iterrows():
+                        detail_id = detail["ID"]
+                        detail_name = detail["Название детали"]
+
+                        # Ищем резервы для этой детали
+                        if not order_reservations.empty:
+                            detail_reservations = order_reservations[order_reservations["ID детали"] == detail_id]
+
+                            if not detail_reservations.empty:
+                                # Для каждого резерва создаём отдельную строку
+                                for _, res in detail_reservations.iterrows():
+                                    metal_str = f"{res['Марка']} {res['Толщина']}мм {res['Ширина']}x{res['Длина']}"
+                                    export_data.append({
+                                        "Заказ": order_name,
+                                        "Деталь": detail_name,
+                                        "Металл": metal_str
+                                    })
+                            else:
+                                # Нет резерва для этой детали
+                                export_data.append({
+                                    "Заказ": order_name,
+                                    "Деталь": detail_name,
+                                    "Металл": ""
+                                })
+                        else:
+                            # Нет резервов вообще
+                            export_data.append({
+                                "Заказ": order_name,
+                                "Деталь": detail_name,
+                                "Металл": ""
+                            })
+
+                    # Добавляем резервы без привязки к детали
+                    if not order_reservations.empty:
+                        unassigned_reservations = order_reservations[
+                            (order_reservations["ID детали"] == -1) |
+                            (order_reservations["ID детали"].isna())
+                            ]
+
+                        for _, res in unassigned_reservations.iterrows():
+                            metal_str = f"{res['Марка']} {res['Толщина']}мм {res['Ширина']}x{res['Длина']}"
+                            export_data.append({
+                                "Заказ": order_name,
+                                "Деталь": "Не привязано к детали",
+                                "Металл": metal_str
+                            })
+
+                else:
+                    # Нет деталей - формируем по резервам
+                    if not order_reservations.empty:
+                        for _, res in order_reservations.iterrows():
+                            metal_str = f"{res['Марка']} {res['Толщина']}мм {res['Ширина']}x{res['Длина']}"
+                            detail_name = res.get("Название детали", "Не указана")
+                            if detail_name == "Не указана" or pd.isna(detail_name):
+                                detail_name = ""
+
+                            export_data.append({
+                                "Заказ": order_name,
+                                "Деталь": detail_name,
+                                "Металл": metal_str
+                            })
+                    else:
+                        # Нет ни деталей, ни резервов
+                        export_data.append({
+                            "Заказ": order_name,
+                            "Деталь": "",
+                            "Металл": ""
+                        })
+
+            if not export_data:
+                messagebox.showwarning("Предупреждение", "Нет данных для экспорта!")
+                return
+
+            # Диалог сохранения файла
+            file_path = filedialog.asksaveasfilename(
+                title="Сохранить файл для Telegram-бота",
+                defaultextension=".xlsx",
+                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+                initialfile="telegram_bot_data.xlsx"
+            )
+
+            if not file_path:
+                return
+
+            # Создаём DataFrame и сохраняем
+            export_df = pd.DataFrame(export_data)
+
+            # Сохраняем с автоподбором ширины
+            with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+                export_df.to_excel(writer, index=False, sheet_name='Data')
+                worksheet = writer.sheets['Data']
+
+                # Автоподбор ширины колонок
+                for column in worksheet.columns:
+                    max_length = 0
+                    column_letter = column[0].column_letter
+                    for cell in column:
+                        try:
+                            if len(str(cell.value)) > max_length:
+                                max_length = len(str(cell.value))
+                        except:
+                            pass
+                    adjusted_width = min(max_length + 2, 60)
+                    worksheet.column_dimensions[column_letter].width = adjusted_width
+
+            messagebox.showinfo("Успех",
+                                f"✅ Файл успешно создан!\n\n"
+                                f"📋 Заказов в работе: {len(active_orders)}\n"
+                                f"📦 Строк данных: {len(export_data)}\n\n"
+                                f"📁 Путь: {file_path}\n\n"
+                                f"📊 Колонки: Заказ | Деталь | Металл")
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось создать файл:\n{e}")
+            import traceback
+            traceback.print_exc()
+
     def setup_writeoffs_tab(self):
         header = tk.Label(self.writeoffs_frame, text="Списание зарезервированных материалов",
                           font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
@@ -1596,73 +1756,185 @@ class ProductionApp:
                               font=("Arial", 9, "italic"), bg='#fff3e0', fg='#d35400')
         info_label.pack(pady=10)
 
+    def add_writeoff(self):
+        reservations_df = load_data("Reservations")
+        if reservations_df.empty:
+            messagebox.showwarning("Предупреждение", "Нет резервов для списания!")
+            return
+
+        active_reserves = reservations_df[reservations_df["Остаток к списанию"] > 0]
+        if active_reserves.empty:
+            messagebox.showwarning("Предупреждение", "Нет резервов с остатком для списания!")
+            return
+
+        add_window = tk.Toplevel(self.root)
+        add_window.title("Списание материала")
+        add_window.geometry("550x500")
+        add_window.configure(bg='#ecf0f1')
+
+        tk.Label(add_window, text="Списание материала с резерва", font=("Arial", 12, "bold"), bg='#ecf0f1').pack(
+            pady=10)
+
+        # РЕЗЕРВ С ПОИСКОМ
+        reserve_frame = tk.Frame(add_window, bg='#ecf0f1')
+        reserve_frame.pack(fill=tk.X, padx=20, pady=5)
+        tk.Label(reserve_frame, text="Резерв (поиск):", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
+            side=tk.LEFT)
+
+        all_reserve_options = []
+        for _, row in active_reserves.iterrows():
+            reserve_str = f"Резерв #{int(row['ID резерва'])} - Заказ {int(row['ID заказа'])} - {row['Марка']} {row['Толщина']}мм (осталось: {int(row['Остаток к списанию'])} шт)"
+            all_reserve_options.append(reserve_str)
+
+        search_container = tk.Frame(reserve_frame, bg='#ecf0f1')
+        search_container.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
+        reserve_search_var = tk.StringVar()
+        selected_reserve = {"value": None}
+
+        reserve_search_entry = tk.Entry(search_container, textvariable=reserve_search_var, font=("Arial", 10))
+        reserve_search_entry.pack(fill=tk.X)
+
+        # Listbox для результатов поиска
+        search_results_frame = tk.Frame(add_window, bg='#ecf0f1')
+        search_results_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
+
+        scroll_results = tk.Scrollbar(search_results_frame, orient=tk.VERTICAL)
+        results_listbox = tk.Listbox(search_results_frame, height=8, font=("Arial", 9),
+                                     yscrollcommand=scroll_results.set)
+        scroll_results.config(command=results_listbox.yview)
+        scroll_results.pack(side=tk.RIGHT, fill=tk.Y)
+        results_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        for option in all_reserve_options:
+            results_listbox.insert(tk.END, option)
+
+        def on_search_change(*args):
+            search_text = reserve_search_var.get().lower()
+            results_listbox.delete(0, tk.END)
+            for option in all_reserve_options:
+                if search_text in option.lower():
+                    results_listbox.insert(tk.END, option)
+
+        def on_select_reserve(event):
+            try:
+                selection = results_listbox.get(results_listbox.curselection())
+                selected_reserve["value"] = selection
+                reserve_search_var.set(selection)
+            except:
+                pass
+
+        reserve_search_var.trace('w', on_search_change)
+        results_listbox.bind('<<ListboxSelect>>', on_select_reserve)
+        results_listbox.bind('<Double-Button-1>', on_select_reserve)
+
+        # Количество
+        qty_frame = tk.Frame(add_window, bg='#ecf0f1')
+        qty_frame.pack(fill=tk.X, padx=20, pady=5)
+        tk.Label(qty_frame, text="Количество (шт):", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
+            side=tk.LEFT)
+        qty_entry = tk.Entry(qty_frame, font=("Arial", 10))
+        qty_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
+        # Комментарий
+        comment_frame = tk.Frame(add_window, bg='#ecf0f1')
+        comment_frame.pack(fill=tk.X, padx=20, pady=5)
+        tk.Label(comment_frame, text="Комментарий:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
+            side=tk.LEFT)
+        comment_entry = tk.Entry(comment_frame, font=("Arial", 10))
+        comment_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
         def save_writeoff():
             try:
-                if not reserve_var.get():
+                reserve_value = selected_reserve["value"] or reserve_search_var.get()
+                if not reserve_value:
                     messagebox.showwarning("Предупреждение", "Выберите резерв!")
                     return
-                reserve_id = int(reserve_var.get().split("ID:")[1].split(" |")[0])
+
+                reserve_id = int(reserve_value.split(" - ")[0].replace("Резерв #", ""))
                 quantity = int(qty_entry.get())
                 comment = comment_entry.get().strip()
-                reserve_row = reservations_df[reservations_df["ID резерва"] == reserve_id].iloc[0]
-                available_qty = int(reserve_row["Остаток к списанию"])
-                if quantity <= 0:
-                    messagebox.showerror("Ошибка", "Количество должно быть больше нуля!")
+
+                # Проверяем резерв
+                reservations_df = load_data("Reservations")
+                reservation = reservations_df[reservations_df["ID резерва"] == reserve_id].iloc[0]
+                remainder = int(reservation["Остаток к списанию"])
+
+                if quantity > remainder:
+                    messagebox.showerror("Ошибка", f"Нельзя списать больше чем осталось!\nОсталось: {remainder} шт")
                     return
-                if quantity > available_qty:
-                    messagebox.showerror("Ошибка",
-                                         f"Недостаточно зарезервированного материала!\nДоступно: {available_qty} шт\nЗапрошено: {quantity} шт")
-                    return
+
+                # Добавляем списание
                 writeoffs_df = load_data("WriteOffs")
                 new_id = 1 if writeoffs_df.empty else int(writeoffs_df["ID списания"].max()) + 1
+
                 new_row = pd.DataFrame([{
                     "ID списания": new_id,
                     "ID резерва": reserve_id,
-                    "ID заказа": reserve_row["ID заказа"],
-                    "ID материала": reserve_row["ID материала"],
-                    "Марка": reserve_row["Марка"],
-                    "Толщина": reserve_row["Толщина"],
-                    "Длина": reserve_row["Длина"],
-                    "Ширина": reserve_row["Ширина"],
+                    "ID заказа": reservation["ID заказа"],
+                    "ID материала": reservation["ID материала"],
+                    "Марка": reservation["Марка"],
+                    "Толщина": reservation["Толщина"],
+                    "Длина": reservation["Длина"],
+                    "Ширина": reservation["Ширина"],
                     "Количество": quantity,
-                    "Дата списания": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "Дата списания": datetime.now().strftime("%Y-%m-%d"),
                     "Комментарий": comment
                 }])
+
                 writeoffs_df = pd.concat([writeoffs_df, new_row], ignore_index=True)
                 save_data("WriteOffs", writeoffs_df)
-                reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Списано"] = int(
-                    reserve_row["Списано"]) + quantity
-                reservations_df.loc[
-                    reservations_df["ID резерва"] == reserve_id, "Остаток к списанию"] = available_qty - quantity
+
+                # Обновляем резервирование
+                reservations_df = load_data("Reservations")
+                reservation = reservations_df[reservations_df["ID резерва"] == reserve_id].iloc[0]
+
+                new_written_off = int(reservation["Списано"]) + quantity
+                new_remainder = int(reservation["Зарезервировано штук"]) - new_written_off
+
+                reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Списано"] = new_written_off
+                reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Остаток к списанию"] = new_remainder
                 save_data("Reservations", reservations_df)
-                material_id = reserve_row["ID материала"]
+
+                # Обновляем материал (ИСПРАВЛЕНО: уменьшаем И наличие И резерв)
+                material_id = int(reservation["ID материала"])
                 if material_id != -1:
                     materials_df = load_data("Materials")
-                    if not materials_df[materials_df["ID"] == material_id].empty:
-                        mat_row = materials_df[materials_df["ID"] == material_id].iloc[0]
-                        current_qty = int(mat_row["Количество штук"])
-                        current_reserved = int(mat_row["Зарезервировано"])
-                        new_qty = current_qty - quantity
-                        new_reserved = current_reserved - quantity
-                        area = (float(mat_row["Длина"]) * float(mat_row["Ширина"]) * new_qty) / 1000000
-                        materials_df.loc[materials_df["ID"] == material_id, "Количество штук"] = new_qty
-                        materials_df.loc[materials_df["ID"] == material_id, "Зарезервировано"] = new_reserved
-                        materials_df.loc[materials_df["ID"] == material_id, "Общая площадь"] = round(area, 2)
-                        materials_df.loc[materials_df["ID"] == material_id, "Доступно"] = new_qty - new_reserved
-                        save_data("Materials", materials_df)
-                        self.refresh_materials()
+                    material = materials_df[materials_df["ID"] == material_id].iloc[0]
+
+                    # Уменьшаем количество в наличии
+                    new_qty = int(material["Количество штук"]) - quantity
+
+                    # Уменьшаем зарезервировано
+                    new_reserved = int(material["Зарезервировано"]) - quantity
+
+                    # Доступно НЕ меняется (т.к. было уже зарезервировано)
+
+                    materials_df.loc[materials_df["ID"] == material_id, "Количество штук"] = new_qty
+                    materials_df.loc[materials_df["ID"] == material_id, "Зарезервировано"] = new_reserved
+
+                    # Пересчитываем площадь
+                    area_per_piece = float(material["Длина"]) * float(material["Ширина"]) / 1_000_000
+                    new_area = new_qty * area_per_piece
+                    materials_df.loc[materials_df["ID"] == material_id, "Общая площадь"] = round(new_area, 2)
+
+                    save_data("Materials", materials_df)
+                    self.refresh_materials()
+
                 self.refresh_reservations()
                 self.refresh_writeoffs()
                 self.refresh_balance()
                 add_window.destroy()
-                messagebox.showinfo("Успех",
-                                    f"Списание #{new_id} успешно выполнено!\n\nСписано: {quantity} шт\nОстаток в резерве: {available_qty - quantity} шт")
-            except ValueError:
-                messagebox.showerror("Ошибка", "Количество должно быть числом!")
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось выполнить списание: {e}")
+                messagebox.showinfo("Успех", f"✅ Списание #{new_id} успешно создано!\nСписано: {quantity} шт")
 
-        tk.Button(add_window, text="Списать", bg='#e67e22', fg='white', font=("Arial", 12, "bold"),
+            except ValueError:
+                messagebox.showerror("Ошибка", "Проверьте правильность ввода числовых значений!")
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось создать списание: {e}")
+                import traceback
+                traceback.print_exc()
+
+        tk.Button(add_window, text="Списать", bg='#e74c3c', fg='white', font=("Arial", 12, "bold"),
                   command=save_writeoff).pack(pady=15)
 
     def delete_writeoff(self):
@@ -1768,58 +2040,33 @@ class ProductionApp:
     def refresh_balance(self):
         for i in self.balance_tree.get_children():
             self.balance_tree.delete(i)
+
         materials_df = load_data("Materials")
-        reservations_df = load_data("Reservations")
-        balance_dict = {}
 
         if not materials_df.empty:
-            for index, row in materials_df.iterrows():
-                key = (row["Марка"], float(row["Толщина"]), float(row["Длина"]), float(row["Ширина"]))
-                if key not in balance_dict:
-                    balance_dict[key] = {"material_id": row["ID"], "in_stock": int(row["Количество штук"]),
-                                         "reserved": 0}
+            for _, row in materials_df.iterrows():
+                qty = int(row["Количество штук"])
+                reserved = int(row["Зарезервировано"])
+                available = int(row["Доступно"])
 
-        if not reservations_df.empty:
-            for index, row in reservations_df.iterrows():
-                key = (row["Марка"], float(row["Толщина"]), float(row["Длина"]), float(row["Ширина"]))
-                reserved_qty = int(row["Зарезервировано штук"])
-                if key not in balance_dict:
-                    balance_dict[key] = {"material_id": -1, "in_stock": 0, "reserved": reserved_qty}
-                else:
-                    balance_dict[key]["reserved"] += reserved_qty
+                # ИСПРАВЛЕНИЕ: Итого = В наличии - Зарезервировано
+                total = qty - reserved
 
-        show_zero = True
-        show_negative = True
+                size_str = f"{row['Ширина']}x{row['Длина']}"
 
-        if hasattr(self, 'balance_toggles') and self.balance_toggles:
-            show_zero = self.balance_toggles.get('show_zero_balance', tk.BooleanVar(value=True)).get()
-            show_negative = self.balance_toggles.get('show_negative', tk.BooleanVar(value=True)).get()
+                values = [
+                    row["ID"],
+                    row["Марка"],
+                    row["Толщина"],
+                    size_str,
+                    qty,
+                    reserved,
+                    available,
+                    total,
+                    row["Общая площадь"]
+                ]
 
-        for key, data in sorted(balance_dict.items()):
-            marka, thickness, length, width = key
-            in_stock = data["in_stock"]
-            reserved = data["reserved"]
-            total = in_stock - reserved
-
-            if not show_zero and total == 0:
-                continue
-            if not show_negative and total < 0:
-                continue
-
-            size_str = f"{width} x {length}"
-            material_id = data["material_id"]
-            material_label = f"ID: {material_id}" if material_id != -1 else "Вручную"
-            values = [material_label, marka, f"{thickness} мм", size_str, in_stock, reserved, total]
-
-            if total < 0:
-                tag = 'negative'
-            elif total == 0:
-                tag = 'zero'
-            else:
-                tag = 'positive'
-
-            self.balance_tree.insert("", "end", values=values, tags=(tag,))
-            self.auto_resize_columns(self.balance_tree)
+                self.balance_tree.insert("", "end", values=values)
 
 
 if __name__ == "__main__":
