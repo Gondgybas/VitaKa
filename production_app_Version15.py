@@ -903,15 +903,52 @@ class ProductionApp:
         tk.Label(add_window, text="Резервирование материала под заказ", font=("Arial", 12, "bold"), bg='#ecf0f1').pack(
             pady=10)
 
-        # ЗАКАЗ
+        # ЗАКАЗ С ПОИСКОМ
         order_frame = tk.Frame(add_window, bg='#ecf0f1')
         order_frame.pack(fill=tk.X, padx=20, pady=5)
-        tk.Label(order_frame, text="Заказ:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
-        order_options = [f"{int(row['ID заказа'])} - {row['Название заказа']}" for _, row in orders_df.iterrows()]
-        order_var = tk.StringVar()
-        order_combo = ttk.Combobox(order_frame, textvariable=order_var, values=order_options, font=("Arial", 10),
-                                   state="readonly", width=35)
-        order_combo.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+        tk.Label(order_frame, text="Заказ (поиск):", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
+            side=tk.LEFT)
+
+        all_order_options = [f"{int(row['ID заказа'])} - {row['Название заказа']}" for _, row in orders_df.iterrows()]
+
+        order_search_var = tk.StringVar()
+        order_search_entry = tk.Entry(order_frame, textvariable=order_search_var, font=("Arial", 10), width=35)
+        order_search_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
+        # Listbox для заказов
+        order_results_frame = tk.Frame(add_window, bg='#ecf0f1')
+        order_results_frame.pack(fill=tk.X, padx=20, pady=5)
+
+        order_scroll = tk.Scrollbar(order_results_frame, orient=tk.VERTICAL)
+        order_listbox = tk.Listbox(order_results_frame, height=4, font=("Arial", 9),
+                                   yscrollcommand=order_scroll.set)
+        order_scroll.config(command=order_listbox.yview)
+        order_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        order_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        for option in all_order_options:
+            order_listbox.insert(tk.END, option)
+
+        selected_order = {"value": None}
+
+        def on_order_search(*args):
+            search_text = order_search_var.get().lower()
+            order_listbox.delete(0, tk.END)
+            for option in all_order_options:
+                if search_text in option.lower():
+                    order_listbox.insert(tk.END, option)
+
+        def on_select_order(event):
+            try:
+                selection = order_listbox.get(order_listbox.curselection())
+                selected_order["value"] = selection
+                order_search_var.set(selection)
+            except:
+                pass
+
+        order_search_var.trace('w', on_order_search)
+        order_listbox.bind('<<ListboxSelect>>', on_select_order)
+        order_listbox.bind('<Double-Button-1>', on_select_order)
 
         # МАТЕРИАЛ С ПОИСКОМ
         material_frame = tk.Frame(add_window, bg='#ecf0f1')
@@ -1007,7 +1044,11 @@ class ProductionApp:
                     messagebox.showwarning("Предупреждение", "Выберите материал!")
                     return
 
-                order_id = int(order_var.get().split(" - ")[0])
+                order_value = selected_order["value"] or order_search_var.get()
+                if not order_value:
+                    messagebox.showwarning("Предупреждение", "Выберите заказ!")
+                    return
+                order_id = int(order_value.split(" - ")[0])
                 quantity = int(qty_entry.get())
 
                 if material_value == "[Добавить вручную]":
