@@ -366,7 +366,7 @@ class ProductionApp:
             self.materials_tree,
             {
                 'show_zero_stock': '📦 Показать с нулевым остатком',
-                'show_zero_available': '✅ Показат�� с нулём доступных'
+                'show_zero_available': '✅ Показать с нулём доступных'
             },
             self.refresh_materials
         )
@@ -1982,6 +1982,25 @@ class ProductionApp:
             self.refresh_balance()
             messagebox.showinfo("Успех", f"Отменено списаний: {count}")
 
+    def create_visibility_toggles(self, parent_frame, tree_widget, toggles_config, refresh_callback):
+        """Создание переключателей видимости для таблиц"""
+        toggles_frame = tk.Frame(parent_frame, bg='white')
+        toggles_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        tk.Label(toggles_frame, text="Фильтры:", bg='white', font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+
+        toggle_vars = {}
+
+        for key, label_text in toggles_config.items():
+            var = tk.BooleanVar(value=True)
+            checkbox = tk.Checkbutton(toggles_frame, text=label_text, variable=var,
+                                      bg='white', font=("Arial", 9),
+                                      command=refresh_callback)
+            checkbox.pack(side=tk.LEFT, padx=10)
+            toggle_vars[key] = var
+
+        return toggle_vars
+
     def setup_balance_tab(self):
         header = tk.Label(self.balance_frame, text="Баланс материалов", font=("Arial", 16, "bold"), bg='white',
                           fg='#2c3e50')
@@ -2007,28 +2026,20 @@ class ProductionApp:
             self.balance_tree.heading(col, text=col)
             self.balance_tree.column(col, width=width, anchor=tk.CENTER)
         self.balance_tree.pack(fill=tk.BOTH, expand=True)
-        self.balance_tree.tag_configure('negative', background='#ffcccc')
-        self.balance_tree.tag_configure('zero', background='#fff9c4')
-        self.balance_tree.tag_configure('positive', background='#c8e6c9')
-
-        # Панель фильтрации
-        self.balance_filters = self.create_filter_panel(
-            self.balance_frame,
-            self.balance_tree,
-            ["Марка", "Толщина", "Размер", "В наличии", "Зарезервировано"],
-            self.refresh_balance
-        )
-
-        # Переключатели видимости
         self.balance_toggles = self.create_visibility_toggles(
             self.balance_frame,
             self.balance_tree,
             {
-                'show_zero_balance': '0️⃣ Показать нулевой баланс',
-                'show_negative': '⚠️ Показать отрицательный баланс'
+                'show_negative': '🔴 Показать отрицательные',
+                'show_zero': '🟡 Показать нулевые',
+                'show_positive': '🟢 Показать положительные'
             },
             self.refresh_balance
         )
+        self.balance_tree.tag_configure('negative', background='#ffcccc')
+        self.balance_tree.tag_configure('zero', background='#fff9c4')
+        self.balance_tree.tag_configure('positive', background='#c8e6c9')
+
 
         buttons_frame = tk.Frame(self.balance_frame, bg='white')
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
@@ -2043,31 +2054,53 @@ class ProductionApp:
 
         materials_df = load_data("Materials")
 
+        # Получаем состояния фильтров
+        show_negative = True
+        show_zero = True
+        show_positive = True
+
+        if hasattr(self, 'balance_toggles') and self.balance_toggles:
+            show_negative = self.balance_toggles.get('show_negative', tk.BooleanVar(value=True)).get()
+            show_zero = self.balance_toggles.get('show_zero', tk.BooleanVar(value=True)).get()
+            show_positive = self.balance_toggles.get('show_positive', tk.BooleanVar(value=True)).get()
+
         if not materials_df.empty:
             for _, row in materials_df.iterrows():
                 qty = int(row["Количество штук"])
                 reserved = int(row["Зарезервировано"])
-                available = int(row["Доступно"])
 
                 # ИСПРАВЛЕНИЕ: Итого = В наличии - Зарезервировано
                 total = qty - reserved
 
-                size_str = f"{row['Ширина']}x{row['Длина']}"
+                # Применяем фильтры
+                if total < 0 and not show_negative:
+                    continue
+                if total == 0 and not show_zero:
+                    continue
+                if total > 0 and not show_positive:
+                    continue
+
+                size_str = f"{row['Ширина']} x {row['Длина']}"
 
                 values = [
-                    row["ID"],
+                    f"ID: {row['ID']}",
                     row["Марка"],
-                    row["Толщина"],
+                    f"{row['Толщина']} мм",
                     size_str,
                     qty,
                     reserved,
-                    available,
-                    total,
-                    row["Общая площадь"]
+                    total
                 ]
 
-                self.balance_tree.insert("", "end", values=values)
+                # Определяем цвет строки
+                if total < 0:
+                    tag = 'negative'
+                elif total == 0:
+                    tag = 'zero'
+                else:
+                    tag = 'positive'
 
+                self.balance_tree.insert("", "end", values=values, tags=(tag,))
 
 if __name__ == "__main__":
     try:
@@ -2080,4 +2113,4 @@ if __name__ == "__main__":
         import traceback
 
         traceback.print_exc()
-        messagebox.showerror("Критиче��кая ошибка", str(e))
+        messagebox.showerror("Критическая ошибка", str(e))
