@@ -22,7 +22,7 @@ def initialize_database():
         orders_sheet = wb.create_sheet("Orders")
         orders_sheet.append(["ID заказа", "Название заказа", "Заказчик", "Дата создания", "Статус", "Примечания"])
         order_details_sheet = wb.create_sheet("OrderDetails")
-        order_details_sheet.append(["ID", "ID заказа", "Название детали", "Количество"])
+        order_details_sheet.append(["ID", "ID заказа", "Название детали", "Количество", "Порезано", "Погнуто"])
         reservations_sheet = wb.create_sheet("Reservations")
         reservations_sheet.append(["ID резерва", "ID заказа", "ID детали", "Название детали", "ID материала", "Марка", "Толщина", "Длина", "Ширина", "Зарезервировано штук", "Списано", "Остаток к списанию", "Дата резерва"])
         writeoffs_sheet = wb.create_sheet("WriteOffs")
@@ -534,10 +534,10 @@ class ProductionApp:
                 area = (length * width * quantity) / 1000000
                 df = load_data("Materials")
                 new_id = 1 if df.empty else int(df["ID"].max()) + 1
-                new_row = pd.DataFrame([{"ID": new_id, "Марка": marka, "Толщина": thickness, "Длина": length,
-                                         "Ширина": width, "Количество штук": quantity, "Общая площадь": round(area, 2),
-                                         "Зарезервировано": 0, "Доступно": quantity,
-                                         "Дата добавления": datetime.now().strftime("%Y-%m-%d")}])
+                new_row = pd.DataFrame(
+                    [{"ID": new_id, "Марка": marka, "Толщина": thickness, "Длина": length, "Ширина": width,
+                      "Количество штук": quantity, "Общая площадь": round(area, 2), "Зарезервировано": 0,
+                      "Доступно": quantity, "Дата добавления": datetime.now().strftime("%Y-%m-%d")}])
                 df = pd.concat([df, new_row], ignore_index=True)
                 save_data("Materials", df)
                 self.refresh_materials()
@@ -682,11 +682,12 @@ class ProductionApp:
         details_tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         scroll_y2 = tk.Scrollbar(details_tree_frame, orient=tk.VERTICAL)
         self.order_details_tree = ttk.Treeview(details_tree_frame,
-                                               columns=("ID", "ID заказа", "Название детали", "Количество"),
-                                               show="headings", yscrollcommand=scroll_y2.set, height=6)
+                                               columns=("ID", "ID заказа", "Название детали", "Количество", "Порезано",
+                                                        "Погнуто"),
+                                               )
         scroll_y2.config(command=self.order_details_tree.yview)
         scroll_y2.pack(side=tk.RIGHT, fill=tk.Y)
-        for col in ["ID", "ID заказа", "Название детали", "Количество"]:
+        for col in ["ID", "ID заказа", "Название детали", "Количество", "Порезано", "Погнуто"]:
             self.order_details_tree.heading(col, text=col)
             self.order_details_tree.column(col, width=150, anchor=tk.CENTER)
         self.order_details_tree.pack(fill=tk.BOTH, expand=True)
@@ -703,6 +704,8 @@ class ProductionApp:
         details_buttons_frame.pack(fill=tk.X, padx=10, pady=5)
         tk.Button(details_buttons_frame, text="Добавить деталь", bg='#27ae60', fg='white',
                   command=self.add_order_detail, **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(details_buttons_frame, text="Редактировать деталь", bg='#f39c12', fg='white',
+                  command=self.edit_order_detail, **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(details_buttons_frame, text="Удалить деталь", bg='#e74c3c', fg='white',
                   command=self.delete_order_detail, **btn_style).pack(side=tk.LEFT, padx=5)
         self.refresh_orders()
@@ -738,16 +741,52 @@ class ProductionApp:
     def refresh_order_details(self):
         for i in self.order_details_tree.get_children():
             self.order_details_tree.delete(i)
+
         selected = self.orders_tree.selection()
         if not selected:
             return
+
         order_id = self.orders_tree.item(selected)["values"][0]
         df = load_data("OrderDetails")
+
         if not df.empty:
+            # Настраиваем теги для цветовой индикации
+            self.order_details_tree.tag_configure('completed', background='#c8e6c9')  # Зеленый - завершено
+            self.order_details_tree.tag_configure('in_progress', background='#fff9c4')  # Желтый - в процессе
+            self.order_details_tree.tag_configure('not_started', background='#ffcccc')  # Красный - не начато
+
             order_details = df[df["ID заказа"] == order_id]
             for index, row in order_details.iterrows():
-                self.order_details_tree.insert("", "end", values=tuple(row))
-                self.auto_resize_columns(self.order_details_tree)
+                # Безопасное получение значений с обработкой пустых строк
+                cut_raw = row.get("Порезано", 0) if "Порезано" in row else 0
+                bent_raw = row.get("Погнуто", 0) if "Погнуто" in row else 0
+
+                # Преобразуем в int с защитой от пустых строк
+                try:
+                    cut = int(cut_raw) if cut_raw != '' and pd.notna(cut_raw) else 0
+                except (ValueError, TypeError):
+                    cut = 0
+
+                try:
+                    bent = int(bent_raw) if bent_raw != '' and pd.notna(bent_raw) else 0
+                except (ValueError, TypeError):
+                    bent = 0
+
+                qty = int(row["Количество"])
+
+                values = (row["ID"], row["ID заказа"], row["Название детали"], qty, cut, bent)
+
+                # Определяем статус выполнения
+                if bent == qty and qty > 0:
+                    tag = 'completed'  # Все детали погнуты = готово
+                elif cut > 0 or bent > 0:
+                    tag = 'in_progress'  # Что-то порезано или погнуто = в работе
+                else:
+                    tag = 'not_started'  # Ничего не сделано
+
+                self.order_details_tree.insert("", "end", values=values, tags=(tag,))
+
+            self.auto_resize_columns(self.order_details_tree)
 
     def download_orders_template(self):
         file_path = filedialog.asksaveasfilename(title="Сохранить шаблон", defaultextension=".xlsx",
@@ -1087,7 +1126,8 @@ class ProductionApp:
                 df = load_data("OrderDetails")
                 new_id = 1 if df.empty else int(df["ID"].max()) + 1
                 new_row = pd.DataFrame(
-                    [{"ID": new_id, "ID заказа": order_id, "Название детали": detail_name, "Количество": quantity}])
+                    [{"ID": new_id, "ID заказа": order_id, "Название детали": detail_name,
+                      "Количество": quantity, "Порезано": 0, "Погнуто": 0}])
                 df = pd.concat([df, new_row], ignore_index=True)
                 save_data("OrderDetails", df)
                 self.refresh_order_details()
@@ -1115,6 +1155,291 @@ class ProductionApp:
             save_data("OrderDetails", df)
             self.refresh_order_details()
             messagebox.showinfo("Успех", f"Удалено деталей: {count}")
+
+            def edit_order_detail(self):
+                """Редактирование детали заказа с учетом этапов производства"""
+                selected = self.order_details_tree.selection()
+                if not selected:
+                    messagebox.showwarning("Предупреждение", "Выберите деталь для редактирования")
+                    return
+
+                detail_id = self.order_details_tree.item(selected)["values"][0]
+                df = load_data("OrderDetails")
+                row = df[df["ID"] == detail_id].iloc[0]
+
+                edit_window = tk.Toplevel(self.root)
+                edit_window.title("Редактировать деталь")
+                edit_window.geometry("450x550")
+                edit_window.configure(bg='#ecf0f1')
+
+                tk.Label(edit_window, text=f"Редактирование детали #{detail_id}",
+                         font=("Arial", 12, "bold"), bg='#ecf0f1').pack(pady=10)
+
+                # Название детали
+                name_frame = tk.Frame(edit_window, bg='#ecf0f1')
+                name_frame.pack(fill=tk.X, padx=20, pady=5)
+                tk.Label(name_frame, text="Название детали:", width=20, anchor='w',
+                         bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
+                name_entry = tk.Entry(name_frame, font=("Arial", 10))
+                name_entry.insert(0, str(row["Название детали"]))
+                name_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
+                # Общее количество
+                qty_frame = tk.Frame(edit_window, bg='#ecf0f1')
+                qty_frame.pack(fill=tk.X, padx=20, pady=5)
+                tk.Label(qty_frame, text="📋 Общее количество:", width=20, anchor='w',
+                         bg='#ecf0f1', font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+                qty_entry = tk.Entry(qty_frame, font=("Arial", 10))
+                qty_entry.insert(0, str(int(row["Количество"])))
+                qty_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
+                # Разделитель для этапов производства
+                tk.Label(edit_window, text="━" * 50, bg='#ecf0f1', fg='#95a5a6').pack(pady=10)
+                tk.Label(edit_window, text="Этапы производства", font=("Arial", 11, "bold"),
+                         bg='#ecf0f1', fg='#2980b9').pack(pady=5)
+
+                # Порезано (этап 1)
+                cut_frame = tk.Frame(edit_window, bg='#ecf0f1')
+                cut_frame.pack(fill=tk.X, padx=20, pady=5)
+                tk.Label(cut_frame, text="✂️ Порезано:", width=20, anchor='w',
+                         bg='#ecf0f1', font=("Arial", 10, "bold"), fg='#27ae60').pack(side=tk.LEFT)
+                cut_entry = tk.Entry(cut_frame, font=("Arial", 10))
+                cut_raw = row.get("Порезано", 0) if "Порезано" in row else 0
+                try:
+                    cut_value = int(cut_raw) if cut_raw != '' and pd.notna(cut_raw) else 0
+                except (ValueError, TypeError):
+                    cut_value = 0
+                cut_entry.insert(0, str(cut_value))
+                cut_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
+                # Погнуто (этап 2)
+                bent_frame = tk.Frame(edit_window, bg='#ecf0f1')
+                bent_frame.pack(fill=tk.X, padx=20, pady=5)
+                tk.Label(bent_frame, text="🔧 Погнуто:", width=20, anchor='w',
+                         bg='#ecf0f1', font=("Arial", 10, "bold"), fg='#f39c12').pack(side=tk.LEFT)
+                bent_entry = tk.Entry(bent_frame, font=("Arial", 10))
+                bent_raw = row.get("Пог��уто", 0) if "Погнуто" in row else 0
+                try:
+                    bent_value = int(bent_raw) if bent_raw != '' and pd.notna(bent_raw) else 0
+                except (ValueError, TypeError):
+                    bent_value = 0
+                bent_entry.insert(0, str(bent_value))
+                bent_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
+                # Информация
+                info_frame = tk.Frame(edit_window, bg='#d1ecf1', relief=tk.RIDGE, borderwidth=2)
+                info_frame.pack(fill=tk.X, padx=20, pady=10)
+                tk.Label(info_frame, text="ℹ️ Информация о производстве:", font=("Arial", 9, "bold"),
+                         bg='#d1ecf1', fg='#0c5460').pack(anchor='w', padx=5, pady=2)
+                tk.Label(info_frame, text="• Общее количество - всего деталей в заказе",
+                         font=("Arial", 8), bg='#d1ecf1', fg='#0c5460').pack(anchor='w', padx=10)
+                tk.Label(info_frame, text="• Порезано - количество заготовок после резки металла",
+                         font=("Arial", 8), bg='#d1ecf1', fg='#0c5460').pack(anchor='w', padx=10)
+                tk.Label(info_frame, text="• Погнуто - количество деталей после гибки",
+                         font=("Arial", 8), bg='#d1ecf1', fg='#0c5460').pack(anchor='w', padx=10)
+                tk.Label(info_frame, text="• Корректировка значений производится вручную",
+                         font=("Arial", 8), bg='#d1ecf1', fg='#0c5460').pack(anchor='w', padx=10)
+
+                def save_changes():
+                    try:
+                        new_name = name_entry.get().strip()
+                        new_qty = int(qty_entry.get().strip())
+                        new_cut = int(cut_entry.get().strip())
+                        new_bent = int(bent_entry.get().strip())
+
+                        if not new_name:
+                            messagebox.showwarning("Предупреждение", "Введите название детали!")
+                            return
+
+                        if new_qty < 0 or new_cut < 0 or new_bent < 0:
+                            messagebox.showerror("Ошибка", "Значения не могут быть отрицательными!")
+                            return
+
+                        if new_cut > new_qty:
+                            if not messagebox.askyesno("Предупреждение",
+                                                       f"Порезано ({new_cut}) больше общего количества ({new_qty}).\n"
+                                                       "Возможно, есть излишки заготовок.\n\nПродолжить?"):
+                                return
+
+                        if new_bent > new_cut:
+                            if not messagebox.askyesno("Предупреждение",
+                                                       f"Погнуто ({new_bent}) больше порезанных ({new_cut}).\n"
+                                                       "Проверьте правильность данных.\n\nПродолжить?"):
+                                return
+
+                        # Обновляем данные
+                        df.loc[df["ID"] == detail_id, "Название детали"] = new_name
+                        df.loc[df["ID"] == detail_id, "Количество"] = new_qty
+                        df.loc[df["ID"] == detail_id, "Порезано"] = new_cut
+                        df.loc[df["ID"] == detail_id, "Погнуто"] = new_bent
+
+                        save_data("OrderDetails", df)
+                        self.refresh_order_details()
+                        edit_window.destroy()
+
+                        # Расчет остатков
+                        to_cut = new_qty - new_cut
+                        to_bend = new_cut - new_bent
+
+                        messagebox.showinfo("Успех",
+                                            f"✅ Деталь обновлена!\n\n"
+                                            f"📋 Общее количество: {new_qty}\n"
+                                            f"✂️ Порезано: {new_cut} (осталось порезать: {to_cut})\n"
+                                            f"🔧 Погнуто: {new_bent} (осталось погнуть: {to_bend})")
+
+                    except ValueError:
+                        messagebox.showerror("Ошибка", "Проверьте правильность ввода числовых значений!")
+                    except Exception as e:
+                        messagebox.showerror("Ошибка", f"Не удалось обновить деталь: {e}")
+
+                tk.Button(edit_window, text="💾 Сохранить изменения", bg='#3498db', fg='white',
+                          font=("Arial", 12, "bold"), command=save_changes).pack(pady=15)
+
+    def delete_order_detail(self):
+        selected = self.order_details_tree.selection()
+        if not selected:
+            messagebox.showwarning("Предупреждение", "Выберите детали для удаления")
+            return
+        count = len(selected)
+        if messagebox.askyesno("Подтверждение", f"Удалить выбранные детали ({count} шт)?"):
+            df = load_data("OrderDetails")
+            for item in selected:
+                detail_id = self.order_details_tree.item(item)["values"][0]
+                df = df[df["ID"] != detail_id]
+            save_data("OrderDetails", df)
+            self.refresh_order_details()
+            messagebox.showinfo("Успех", f"Удалено деталей: {count}")
+
+    def edit_order_detail(self):
+        """Редактирование детали заказа с учетом этапов производства"""
+        selected = self.order_details_tree.selection()
+        if not selected:
+            messagebox.showwarning("Предупреждение", "Выберите деталь для редактирования")
+            return
+
+        detail_id = self.order_details_tree.item(selected)["values"][0]
+        df = load_data("OrderDetails")
+        row = df[df["ID"] == detail_id].iloc[0]
+
+        edit_window = tk.Toplevel(self.root)
+        edit_window.title("Редактировать деталь")
+        edit_window.geometry("450x550")
+        edit_window.configure(bg='#ecf0f1')
+
+        tk.Label(edit_window, text=f"Редактирование детали #{detail_id}",
+                 font=("Arial", 12, "bold"), bg='#ecf0f1').pack(pady=10)
+
+        # Название детали
+        name_frame = tk.Frame(edit_window, bg='#ecf0f1')
+        name_frame.pack(fill=tk.X, padx=20, pady=5)
+        tk.Label(name_frame, text="Название детали:", width=20, anchor='w',
+                 bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
+        name_entry = tk.Entry(name_frame, font=("Arial", 10))
+        name_entry.insert(0, str(row["Название детали"]))
+        name_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
+        # Общее количество
+        qty_frame = tk.Frame(edit_window, bg='#ecf0f1')
+        qty_frame.pack(fill=tk.X, padx=20, pady=5)
+        tk.Label(qty_frame, text="📋 Общее количество:", width=20, anchor='w',
+                 bg='#ecf0f1', font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+        qty_entry = tk.Entry(qty_frame, font=("Arial", 10))
+        qty_entry.insert(0, str(int(row["Количество"])))
+        qty_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
+        # Разделитель для этапов производства
+        tk.Label(edit_window, text="━" * 50, bg='#ecf0f1', fg='#95a5a6').pack(pady=10)
+        tk.Label(edit_window, text="Этапы производства", font=("Arial", 11, "bold"),
+                 bg='#ecf0f1', fg='#2980b9').pack(pady=5)
+
+        # Порезано (этап 1)
+        cut_frame = tk.Frame(edit_window, bg='#ecf0f1')
+        cut_frame.pack(fill=tk.X, padx=20, pady=5)
+        tk.Label(cut_frame, text="✂️ Порезано:", width=20, anchor='w',
+                 bg='#ecf0f1', font=("Arial", 10, "bold"), fg='#27ae60').pack(side=tk.LEFT)
+        cut_entry = tk.Entry(cut_frame, font=("Arial", 10))
+        cut_value = row.get("Порезано", 0) if "Порезано" in row and pd.notna(row["Порезано"]) else 0
+        cut_entry.insert(0, str(int(cut_value)))
+        cut_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
+        # Погнуто (этап 2)
+        bent_frame = tk.Frame(edit_window, bg='#ecf0f1')
+        bent_frame.pack(fill=tk.X, padx=20, pady=5)
+        tk.Label(bent_frame, text="🔧 Погнуто:", width=20, anchor='w',
+                 bg='#ecf0f1', font=("Arial", 10, "bold"), fg='#f39c12').pack(side=tk.LEFT)
+        bent_entry = tk.Entry(bent_frame, font=("Arial", 10))
+        bent_value = row.get("Погнуто", 0) if "Погнуто" in row and pd.notna(row["Погнуто"]) else 0
+        bent_entry.insert(0, str(int(bent_value)))
+        bent_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
+        # Информация
+        info_frame = tk.Frame(edit_window, bg='#d1ecf1', relief=tk.RIDGE, borderwidth=2)
+        info_frame.pack(fill=tk.X, padx=20, pady=10)
+        tk.Label(info_frame, text="ℹ️ Информация о производстве:", font=("Arial", 9, "bold"),
+                 bg='#d1ecf1', fg='#0c5460').pack(anchor='w', padx=5, pady=2)
+        tk.Label(info_frame, text="• Общее количество - всего деталей в заказе",
+                 font=("Arial", 8), bg='#d1ecf1', fg='#0c5460').pack(anchor='w', padx=10)
+        tk.Label(info_frame, text="• Порезано - количество заготовок после резки металла",
+                 font=("Arial", 8), bg='#d1ecf1', fg='#0c5460').pack(anchor='w', padx=10)
+        tk.Label(info_frame, text="• Погнуто - количество деталей после гибки",
+                 font=("Arial", 8), bg='#d1ecf1', fg='#0c5460').pack(anchor='w', padx=10)
+        tk.Label(info_frame, text="• Корректировка значений производится вручную",
+                 font=("Arial", 8), bg='#d1ecf1', fg='#0c5460').pack(anchor='w', padx=10)
+
+        def save_changes():
+            try:
+                new_name = name_entry.get().strip()
+                new_qty = int(qty_entry.get().strip())
+                new_cut = int(cut_entry.get().strip())
+                new_bent = int(bent_entry.get().strip())
+
+                if not new_name:
+                    messagebox.showwarning("Предупреждение", "Введите название детали!")
+                    return
+
+                if new_qty < 0 or new_cut < 0 or new_bent < 0:
+                    messagebox.showerror("Ошибка", "Значения не могут быть отрицательными!")
+                    return
+
+                if new_cut > new_qty:
+                    if not messagebox.askyesno("Предупреждение",
+                                               f"Порезано ({new_cut}) больше общего количества ({new_qty}).\n"
+                                               "Возможно, есть излишки заготовок.\n\nПродолжить?"):
+                        return
+
+                if new_bent > new_cut:
+                    if not messagebox.askyesno("Предупреждение",
+                                               f"Погнуто ({new_bent}) больше порезанных ({new_cut}).\n"
+                                               "Проверьте правильность данных.\n\nПродолжить?"):
+                        return
+
+                # Обновляем данные
+                df.loc[df["ID"] == detail_id, "Название детали"] = new_name
+                df.loc[df["ID"] == detail_id, "Количество"] = new_qty
+                df.loc[df["ID"] == detail_id, "Порезано"] = new_cut
+                df.loc[df["ID"] == detail_id, "Погнуто"] = new_bent
+
+                save_data("OrderDetails", df)
+                self.refresh_order_details()
+                edit_window.destroy()
+
+                # Расчет остатков
+                to_cut = new_qty - new_cut
+                to_bend = new_cut - new_bent
+
+                messagebox.showinfo("Успех",
+                                    f"✅ Деталь обновлена!\n\n"
+                                    f"📋 Общее количество: {new_qty}\n"
+                                    f"✂️ Порезано: {new_cut} (осталось порезать: {to_cut})\n"
+                                    f"🔧 Погнуто: {new_bent} (осталось погнуть: {to_bend})")
+
+            except ValueError:
+                messagebox.showerror("Ошибка", "Проверьте правильность ввода числовых значений!")
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось обновить деталь: {e}")
+
+        tk.Button(edit_window, text="💾 Сохранить изменения", bg='#3498db', fg='white',
+                  font=("Arial", 12, "bold"), command=save_changes).pack(pady=15)
 
     def setup_reservations_tab(self):
         header = tk.Label(self.reservations_frame, text="Резервирование материалов", font=("Arial", 16, "bold"),
