@@ -1218,7 +1218,7 @@ class ProductionApp:
                 tk.Label(bent_frame, text="🔧 Погнуто:", width=20, anchor='w',
                          bg='#ecf0f1', font=("Arial", 10, "bold"), fg='#f39c12').pack(side=tk.LEFT)
                 bent_entry = tk.Entry(bent_frame, font=("Arial", 10))
-                bent_raw = row.get("Пог��уто", 0) if "Погнуто" in row else 0
+                bent_raw = row.get("Погнуто", 0) if "Погнуто" in row else 0
                 try:
                     bent_value = int(bent_raw) if bent_raw != '' and pd.notna(bent_raw) else 0
                 except (ValueError, TypeError):
@@ -1489,7 +1489,8 @@ class ProductionApp:
                   **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_reservations,
                   **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="📤 Экспорт для бота", bg='#16a085', fg='white', command=self.export_for_telegram_bot, **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Задание на лазер", bg='#e67e22', fg='white', command=self.export_laser_task,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
         self.refresh_reservations()
 
     def refresh_reservations(self):
@@ -1524,7 +1525,7 @@ class ProductionApp:
 
         add_window = tk.Toplevel(self.root)
         add_window.title("Создать резерв")
-        add_window.geometry("550x750")
+        add_window.geometry("550x850")
         add_window.configure(bg='#ecf0f1')
         tk.Label(add_window, text="Резервирование материала под заказ", font=("Arial", 12, "bold"), bg='#ecf0f1').pack(
             pady=10)
@@ -1785,7 +1786,7 @@ class ProductionApp:
                 add_window.destroy()
 
                 detail_info = f"\nДеталь: {detail_name}" if detail_name != "Не указана" else ""
-                messagebox.showinfo("Успех", f"✅ Резерв #{new_id} успешно создан!{detail_info}")
+                messagebox.showinfo("Успех", f"Резерв #{new_id} успешно создан!{detail_info}")
 
             except ValueError:
                 messagebox.showerror("Ошибка", "Проверьте правильность ввода числовых значений!")
@@ -1825,160 +1826,236 @@ class ProductionApp:
             self.refresh_balance()
             messagebox.showinfo("Успех", f"Удалено резервов: {count}")
 
-    def export_for_telegram_bot(self):
-        """Экспорт данных для Telegram-бота (Заказ | Деталь | Металл)"""
+    def export_laser_task(self):
+        """Формирование задания на лазер из резервов"""
         try:
             # Загружаем данные
             orders_df = load_data("Orders")
-            order_details_df = load_data("OrderDetails")
             reservations_df = load_data("Reservations")
+            order_details_df = load_data("OrderDetails")
 
-            # Фильтруем заказы "В работе"
             if orders_df.empty:
                 messagebox.showwarning("Предупреждение", "Нет заказов в базе!")
                 return
 
+            # Фильтруем заказы "В работе"
             active_orders = orders_df[orders_df["Статус"] == "В работе"]
 
             if active_orders.empty:
                 messagebox.showwarning("Предупреждение", "Нет заказов со статусом 'В работе'!")
                 return
 
-            # Формируем данные для экспорта
-            export_data = []
+            # Проверяем наличие резервов
+            if reservations_df.empty:
+                messagebox.showwarning("Предупреждение", "Нет зарезервированных материалов!")
+                return
+
+            # Окно выбора заказов
+            select_window = tk.Toplevel(self.root)
+            select_window.title("Выбор заказов для задания на лазер")
+            select_window.geometry("700x600")
+            select_window.configure(bg='#ecf0f1')
+
+            tk.Label(select_window, text="Формирование задания на лазер",
+                     font=("Arial", 14, "bold"), bg='#ecf0f1', fg='#e67e22').pack(pady=10)
+
+            tk.Label(select_window, text="Выберите заказы (статус: В работе)",
+                     font=("Arial", 10), bg='#ecf0f1').pack(pady=5)
+
+            # Фрейм со списком заказов
+            list_frame = tk.Frame(select_window, bg='#ecf0f1')
+            list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+
+            scroll_y = tk.Scrollbar(list_frame, orient=tk.VERTICAL)
+
+            # Создаем Listbox с множественным выбором
+            orders_listbox = tk.Listbox(list_frame, selectmode=tk.MULTIPLE,
+                                        font=("Arial", 10), yscrollcommand=scroll_y.set)
+            scroll_y.config(command=orders_listbox.yview)
+            scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
+            orders_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+            # Заполняем список заказов "В работе"
+            order_map = {}
+            orders_without_reserves = []
 
             for _, order in active_orders.iterrows():
                 order_id = order["ID заказа"]
                 order_name = order["Название заказа"]
+                customer = order["Заказчик"]
 
-                # Получаем детали этого заказа
-                if not order_details_df.empty:
-                    details = order_details_df[order_details_df["ID заказа"] == order_id]
+                # Проверяем наличие резервов
+                has_reserves = not reservations_df[reservations_df["ID заказа"] == order_id].empty
+
+                if has_reserves:
+                    display_text = f"ID:{int(order_id)} | {customer} | {order_name}"
+                    orders_listbox.insert(tk.END, display_text)
+                    order_map[display_text] = order_id
                 else:
-                    details = pd.DataFrame()
+                    orders_without_reserves.append(f"{customer} - {order_name}")
 
-                # Получаем резервы этого заказа
-                if not reservations_df.empty:
-                    order_reservations = reservations_df[reservations_df["ID заказа"] == order_id]
-                else:
-                    order_reservations = pd.DataFrame()
+            if orders_listbox.size() == 0:
+                messagebox.showwarning("Предупреждение",
+                                       "Нет заказов 'В работе' с зарезервированными материалами!")
+                select_window.destroy()
+                return
 
-                if not details.empty:
-                    # Есть детали - формируем строки по деталям
-                    for _, detail in details.iterrows():
-                        detail_id = detail["ID"]
-                        detail_name = detail["Название детали"]
+            # Кнопки выбора
+            btn_frame = tk.Frame(select_window, bg='#ecf0f1')
+            btn_frame.pack(fill=tk.X, padx=20, pady=5)
 
-                        # Ищем резервы для этой детали
-                        if not order_reservations.empty:
-                            detail_reservations = order_reservations[order_reservations["ID детали"] == detail_id]
+            def select_all():
+                orders_listbox.select_set(0, tk.END)
 
-                            if not detail_reservations.empty:
-                                # Для каждого резерва создаём отдельную строку
-                                for _, res in detail_reservations.iterrows():
-                                    metal_str = f"{res['Марка']} {res['Толщина']}мм {res['Ширина']}x{res['Длина']}"
-                                    export_data.append({
-                                        "Заказ": order_name,
-                                        "Деталь": detail_name,
-                                        "Металл": metal_str
-                                    })
-                            else:
-                                # Нет резерва для этой детали
-                                export_data.append({
-                                    "Заказ": order_name,
-                                    "Деталь": detail_name,
-                                    "Металл": ""
-                                })
-                        else:
-                            # Нет резервов вообще
-                            export_data.append({
-                                "Заказ": order_name,
-                                "Деталь": detail_name,
-                                "Металл": ""
-                            })
+            def deselect_all():
+                orders_listbox.select_clear(0, tk.END)
 
-                    # Добавляем резервы без привязки к детали
-                    if not order_reservations.empty:
-                        unassigned_reservations = order_reservations[
-                            (order_reservations["ID детали"] == -1) |
-                            (order_reservations["ID детали"].isna())
-                            ]
+            tk.Button(btn_frame, text="Выбрать все", bg='#3498db', fg='white',
+                      font=("Arial", 9), command=select_all).pack(side=tk.LEFT, padx=5)
+            tk.Button(btn_frame, text="Снять выбор", bg='#95a5a6', fg='white',
+                      font=("Arial", 9), command=deselect_all).pack(side=tk.LEFT, padx=5)
 
-                        for _, res in unassigned_reservations.iterrows():
-                            metal_str = f"{res['Марка']} {res['Толщина']}мм {res['Ширина']}x{res['Длина']}"
-                            export_data.append({
-                                "Заказ": order_name,
-                                "Деталь": "Не привязано к детали",
-                                "Металл": metal_str
-                            })
+            # Информация
+            info_frame = tk.Frame(select_window, bg='#d1ecf1', relief=tk.RIDGE, borderwidth=2)
+            info_frame.pack(fill=tk.X, padx=20, pady=10)
+            tk.Label(info_frame, text="Информация:", font=("Arial", 9, "bold"),
+                     bg='#d1ecf1', fg='#0c5460').pack(anchor='w', padx=5, pady=2)
+            tk.Label(info_frame, text="- Отображаются только заказы со статусом 'В работе'",
+                     font=("Arial", 8), bg='#d1ecf1', fg='#0c5460').pack(anchor='w', padx=10)
+            tk.Label(info_frame, text="- Для каждого резерва создается отдельная строка",
+                     font=("Arial", 8), bg='#d1ecf1', fg='#0c5460').pack(anchor='w', padx=10)
+            tk.Label(info_frame, text="- Формат: Заказчик | Название заявки | Деталь | Металл",
+                     font=("Arial", 8), bg='#d1ecf1', fg='#0c5460').pack(anchor='w', padx=10)
+            tk.Label(info_frame, text="- Если деталь не привязана - 'Без учета деталей'",
+                     font=("Arial", 8), bg='#d1ecf1', fg='#0c5460').pack(anchor='w', padx=10)
 
-                else:
-                    # Нет деталей - формируем по резервам
-                    if not order_reservations.empty:
-                        for _, res in order_reservations.iterrows():
-                            metal_str = f"{res['Марка']} {res['Толщина']}мм {res['Ширина']}x{res['Длина']}"
-                            detail_name = res.get("Название детали", "Не указана")
-                            if detail_name == "Не указана" or pd.isna(detail_name):
-                                detail_name = ""
+            # Предупреждение о заказах без резервов
+            if orders_without_reserves:
+                warning_frame = tk.Frame(select_window, bg='#fff3cd', relief=tk.RIDGE, borderwidth=2)
+                warning_frame.pack(fill=tk.X, padx=20, pady=5)
+                tk.Label(warning_frame, text="Внимание! Заказы 'В работе' без резервов:",
+                         font=("Arial", 8, "bold"), bg='#fff3cd', fg='#856404').pack(anchor='w', padx=5, pady=2)
+                for order_name in orders_without_reserves[:3]:
+                    tk.Label(warning_frame, text=f"  - {order_name}",
+                             font=("Arial", 7), bg='#fff3cd', fg='#856404').pack(anchor='w', padx=10)
+                if len(orders_without_reserves) > 3:
+                    tk.Label(warning_frame, text=f"  ... и ещё {len(orders_without_reserves) - 3}",
+                             font=("Arial", 7), bg='#fff3cd', fg='#856404').pack(anchor='w', padx=10)
 
-                            export_data.append({
-                                "Заказ": order_name,
-                                "Деталь": detail_name,
-                                "Металл": metal_str
-                            })
-                    else:
-                        # Нет ни деталей, ни резервов
+            def generate_file():
+                selected_indices = orders_listbox.curselection()
+                if not selected_indices:
+                    messagebox.showwarning("Предупреждение", "Выберите хотя бы один заказ!")
+                    return
+
+                # Получаем выбранные ID заказов
+                selected_order_ids = []
+                for index in selected_indices:
+                    display_text = orders_listbox.get(index)
+                    selected_order_ids.append(order_map[display_text])
+
+                # Формируем данные для экспорта
+                export_data = []
+                warnings = []
+
+                for order_id in selected_order_ids:
+                    # Получаем информацию о заказе
+                    order_row = orders_df[orders_df["ID заказа"] == order_id]
+                    if order_row.empty:
+                        continue
+
+                    customer = order_row.iloc[0]["Заказчик"]
+                    order_name = order_row.iloc[0]["Название заказа"]
+
+                    # Получаем резервы этого заказа
+                    order_reserves = reservations_df[reservations_df["ID заказа"] == order_id]
+
+                    if order_reserves.empty:
+                        warnings.append(f"{customer} - {order_name}: нет резервов")
+                        continue
+
+                    for _, reserve in order_reserves.iterrows():
+                        # Формируем название детали
+                        detail_id = reserve.get("ID детали", -1)
+                        detail_name = reserve.get("Название детали", "Без учета деталей")
+
+                        # Проверяем корректность привязки детали
+                        if pd.isna(detail_name) or detail_name == "" or detail_name == "Не указана" or detail_id == -1:
+                            detail_name = "Без учета деталей"
+
+                        # Формируем описание металла
+                        metal_str = f"{reserve['Марка']} {reserve['Толщина']}мм {reserve['Ширина']}x{reserve['Длина']}"
+
+                        # Добавляем строку
                         export_data.append({
-                            "Заказ": order_name,
-                            "Деталь": "",
-                            "Металл": ""
+                            "Заказчик": customer,
+                            "Название заявки": order_name,
+                            "Название детали": detail_name,
+                            "Металл": metal_str
                         })
 
-            if not export_data:
-                messagebox.showwarning("Предупреждение", "Нет данных для экспорта!")
-                return
+                if not export_data:
+                    messagebox.showwarning("Предупреждение", "Нет данных для экспорта!")
+                    return
 
-            # Диалог сохранения файла
-            file_path = filedialog.asksaveasfilename(
-                title="Сохранить файл для Telegram-бота",
-                defaultextension=".xlsx",
-                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
-                initialfile="telegram_bot_data.xlsx"
-            )
+                # Проверяем наличие строк "Без учета деталей"
+                rows_without_details = sum(1 for row in export_data if row["Название детали"] == "Без учета деталей")
 
-            if not file_path:
-                return
+                if rows_without_details > 0:
+                    if not messagebox.askyesno("Предупреждение",
+                                               f"В таблице будет {rows_without_details} строк(и) без привязки к деталям!\n\n"
+                                               "Это материалы, зарезервированные без указания конкретной детали.\n\n"
+                                               "Продолжить формирование?"):
+                        return
 
-            # Создаём DataFrame и сохраняем
-            export_df = pd.DataFrame(export_data)
+                # Диалог сохранения файла
+                file_path = filedialog.asksaveasfilename(
+                    title="Сохранить задание на лазер",
+                    defaultextension=".xlsx",
+                    filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+                    initialfile=f"zadanie_na_laser_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                )
 
-            # Сохраняем с автоподбором ширины
-            with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
-                export_df.to_excel(writer, index=False, sheet_name='Data')
-                worksheet = writer.sheets['Data']
+                if not file_path:
+                    return
 
-                # Автоподбор ширины колонок
-                for column in worksheet.columns:
-                    max_length = 0
-                    column_letter = column[0].column_letter
-                    for cell in column:
-                        try:
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except:
-                            pass
-                    adjusted_width = min(max_length + 2, 60)
-                    worksheet.column_dimensions[column_letter].width = adjusted_width
+                # Создаём DataFrame и сохраняем
+                export_df = pd.DataFrame(export_data)
 
-            messagebox.showinfo("Успех",
-                                f"✅ Файл успешно создан!\n\n"
-                                f"📋 Заказов в работе: {len(active_orders)}\n"
-                                f"📦 Строк данных: {len(export_data)}\n\n"
-                                f"📁 Путь: {file_path}\n\n"
-                                f"📊 Колонки: Заказ | Деталь | Металл")
+                # Сохраняем с автоподбором ширины
+                with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+                    export_df.to_excel(writer, index=False, sheet_name='Задание на лазер')
+                    worksheet = writer.sheets['Задание на лазер']
+
+                    # Автоподбор ширины колонок
+                    for column in worksheet.columns:
+                        max_length = 0
+                        column_letter = column[0].column_letter
+                        for cell in column:
+                            try:
+                                if len(str(cell.value)) > max_length:
+                                    max_length = len(str(cell.value))
+                            except:
+                                pass
+                        adjusted_width = min(max_length + 2, 60)
+                        worksheet.column_dimensions[column_letter].width = adjusted_width
+
+                select_window.destroy()
+
+                result_msg = f"Задание на лазер успешно создано!\n\n"
+                result_msg += f"Заказов обработано: {len(selected_order_ids)}\n"
+                result_msg += f"Строк в таблице: {len(export_data)}\n"
+                result_msg += f"Строк без деталей: {rows_without_details}\n\n"
+                result_msg += f"Файл сохранен:\n{file_path}"
+
+                messagebox.showinfo("Успех", result_msg)
+
+            # Кнопка формирования
+            tk.Button(select_window, text="Сформировать файл", bg='#e67e22', fg='white',
+                      font=("Arial", 12, "bold"), command=generate_file).pack(pady=15)
 
         except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось создать файл:\n{e}")
+            messagebox.showerror("Ошибка", f"Не удалось создать задание на лазер:\n{e}")
             import traceback
             traceback.print_exc()
 
