@@ -675,8 +675,9 @@ class ProductionApp:
         tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_orders,
                   **btn_style).pack(side=tk.LEFT, padx=5)
 
-        details_label = tk.Label(self.orders_frame, text="Детали выбранного заказа", font=("Arial", 12, "bold"),
-                                 bg='white')
+        details_label = tk.Label(self.orders_frame,
+                                 text="Детали выбранного заказа (дважды кликните «Порезано» или «Погнуто» для редактирования)",
+                                 font=("Arial", 11, "bold"), bg='white', fg='#2c3e50')
         details_label.pack(pady=5)
         details_tree_frame = tk.Frame(self.orders_frame, bg='white')
         details_tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
@@ -684,13 +685,16 @@ class ProductionApp:
         self.order_details_tree = ttk.Treeview(details_tree_frame,
                                                columns=("ID", "ID заказа", "Название детали", "Количество", "Порезано",
                                                         "Погнуто"),
-                                               )
+                                               show="headings", yscrollcommand=scroll_y2.set)
         scroll_y2.config(command=self.order_details_tree.yview)
         scroll_y2.pack(side=tk.RIGHT, fill=tk.Y)
         for col in ["ID", "ID заказа", "Название детали", "Количество", "Порезано", "Погнуто"]:
             self.order_details_tree.heading(col, text=col)
             self.order_details_tree.column(col, width=150, anchor=tk.CENTER)
         self.order_details_tree.pack(fill=tk.BOTH, expand=True)
+
+        # Привязываем двойной клик для редактирования
+        self.order_details_tree.bind('<Double-1>', self.on_detail_double_click)
 
         # Панель фильтрации деталей
         self.order_details_filters = self.create_filter_panel(
@@ -794,6 +798,213 @@ class ProductionApp:
                 self.order_details_tree.insert("", "end", values=values, tags=(tag,))
 
             self.auto_resize_columns(self.order_details_tree)
+
+    def on_detail_double_click(self, event):
+        """Обработка двойного клика по детали для редактирования прямо в таблице"""
+        try:
+            region = self.order_details_tree.identify("region", event.x, event.y)
+            if region != "cell":
+                return
+
+            # Определяем колонку
+            column = self.order_details_tree.identify_column(event.x)
+            if not column:
+                return
+
+            # Преобразуем #1, #2, #3 в индекс 0, 1, 2
+            column_index = int(column.replace('#', '')) - 1
+
+            # Проверяем что индекс в пределах
+            columns = self.order_details_tree['columns']
+            if column_index < 0 or column_index >= len(columns):
+                return
+
+            column_name = columns[column_index]
+
+            # Разрешаем редактировать только Порезано и Погнуто
+            if column_name not in ["Порезано", "Погнуто"]:
+                return
+
+            # Определяем строку
+            item = self.order_details_tree.identify_row(event.y)
+            if not item:
+                return
+
+            # Получаем данные строки
+            values = self.order_details_tree.item(item, 'values')
+            if not values or len(values) < 6:
+                return
+
+            try:
+                detail_id = int(values[0])
+            except (ValueError, TypeError):
+                messagebox.showerror("Ошибка", "Не удалось определить ID детали")
+                return
+
+            # СРАЗУ ПРОВЕРЯЕМ существование детали в базе
+            df = load_data("OrderDetails")
+            if df.empty:
+                messagebox.showwarning("Предупреждение", "Таблица деталей пуста")
+                return
+
+            detail_exists = df[df["ID"] == detail_id]
+            if detail_exists.empty:
+                messagebox.showerror("Ошибка",
+                                     f"Деталь ID {detail_id} не найдена в базе данных!\n\n"
+                                     f"Возможно данные устарели. Нажмите 'Обновить'.")
+                self.refresh_order_details()
+                return
+
+            detail_name = values[2]
+
+            try:
+                total_qty = int(values[3])
+                current_cut = int(values[4]) if values[4] and str(values[4]).strip() != '' else 0
+                current_bent = int(values[5]) if values[5] and str(values[5]).strip() != '' else 0
+            except (ValueError, IndexError):
+                messagebox.showerror("Ошибка", "Не удалось прочитать значения детали")
+                return
+
+            # Получаем координаты ячейки
+            x, y, width, height = self.order_details_tree.bbox(item, column)
+
+            # Создаем Entry для редактирования
+            edit_entry = tk.Entry(self.order_details_tree, font=("Arial", 10))
+            edit_entry.place(x=x, y=y, width=width, height=height)
+
+            # Вставляем текущее значение
+            current_value = values[column_index]
+            edit_entry.insert(0, str(current_value))
+            edit_entry.select_range(0, tk.END)
+            edit_entry.focus()
+
+            def save_cell_edit(event=None):
+                try:
+                    new_value_str = edit_entry.get().strip()
+                    if not new_value_str:
+                        new_value = 0
+                    else:
+                        new_value = int(new_value_str)
+
+                    if new_value < 0:
+                        messagebox.showerror("Ошибка", "Значение не может быть отрицательным!")
+                        edit_entry.destroy()
+                        return
+
+                    # ПЕРЕЗАГРУЖАЕМ данные для актуальности
+                    df = load_data("OrderDetails")
+                    if df.empty:
+                        messagebox.showerror("Ошибка", "Не удалось загрузить детали")
+                        edit_entry.destroy()
+                        return
+
+                    # ПРОВЕРЯЕМ существование детали ЕЩЕ РАЗ
+                    detail_row = df[df["ID"] == detail_id]
+                    if detail_row.empty:
+                        messagebox.showerror("Ошибка",
+                                             f"Деталь ID {detail_id} была удалена!\n\n"
+                                             f"Обновите список деталей.")
+                        edit_entry.destroy()
+                        self.refresh_order_details()
+                        return
+
+                    # Получаем актуальные данные из базы
+                    actual_row = detail_row.iloc[0]
+                    actual_cut = int(actual_row.get("Порезано", 0)) if pd.notna(actual_row.get("Порезано")) else 0
+                    actual_bent = int(actual_row.get("Погнуто", 0)) if pd.notna(actual_row.get("Погнуто")) else 0
+                    actual_qty = int(actual_row["Количество"])
+
+                    # Определяем что редактируем
+                    if column_name == "Порезано":
+                        new_cut = new_value
+                        new_bent = actual_bent
+
+                        if new_cut < new_bent:
+                            if not messagebox.askyesno("Предупреждение",
+                                                       f"Порезано ({new_cut}) меньше погнутого ({new_bent}).\n"
+                                                       f"Это означает, что погнуто больше заготовок чем есть.\n\n"
+                                                       f"Продолжить?"):
+                                edit_entry.destroy()
+                                return
+
+                        if new_cut > actual_qty:
+                            if not messagebox.askyesno("Предупреждение",
+                                                       f"Порезано ({new_cut}) больше общего количества ({actual_qty}).\n"
+                                                       f"Возможно есть излишки заготовок.\n\n"
+                                                       f"Продолжить?"):
+                                edit_entry.destroy()
+                                return
+
+                        df.loc[df["ID"] == detail_id, "Порезано"] = new_cut
+
+                    elif column_name == "Погнуто":
+                        new_cut = actual_cut
+                        new_bent = new_value
+
+                        if new_bent > new_cut:
+                            if not messagebox.askyesno("Предупреждение",
+                                                       f"Погнуто ({new_bent}) больше порезанного ({new_cut}).\n"
+                                                       f"Нужно сначала порезать заготовки.\n\n"
+                                                       f"Продолжить?"):
+                                edit_entry.destroy()
+                                return
+
+                        df.loc[df["ID"] == detail_id, "Погнуто"] = new_bent
+
+                    # Сохраняем
+                    save_data("OrderDetails", df)
+                    self.refresh_order_details()
+                    edit_entry.destroy()
+
+                    # Показываем краткое уведомление
+                    to_cut = actual_qty - new_cut
+                    to_bend = new_cut - new_bent
+
+                    status_msg = f"✅ {detail_name}\n"
+                    status_msg += f"Порезано: {new_cut}/{actual_qty} (осталось: {to_cut})\n"
+                    status_msg += f"Погнуто: {new_bent}/{new_cut} (осталось: {to_bend})"
+
+                    self.show_status_tooltip(status_msg)
+
+                except ValueError:
+                    messagebox.showerror("Ошибка", "Введите корректное число!")
+                    edit_entry.destroy()
+                except Exception as e:
+                    messagebox.showerror("Ошибка", f"Не удалось обновить: {e}")
+                    edit_entry.destroy()
+                    import traceback
+                    traceback.print_exc()
+
+            # Привязываем события
+            edit_entry.bind('<Return>', save_cell_edit)
+            edit_entry.bind('<FocusOut>', save_cell_edit)
+            edit_entry.bind('<Escape>', lambda e: edit_entry.destroy())
+
+        except Exception as e:
+            print(f"Ошибка в on_detail_double_click: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def show_status_tooltip(self, message):
+        """Показывает временное всплывающее окно со статусом"""
+        try:
+            tooltip = tk.Toplevel(self.root)
+            tooltip.wm_overrideredirect(True)
+
+            # Позиционируем окно рядом с курсором
+            x = self.root.winfo_pointerx() + 10
+            y = self.root.winfo_pointery() + 10
+            tooltip.wm_geometry(f"+{x}+{y}")
+
+            label = tk.Label(tooltip, text=message, background="#d4edda",
+                             foreground="#155724", relief=tk.SOLID, borderwidth=1,
+                             font=("Arial", 9), padx=10, pady=5, justify=tk.LEFT)
+            label.pack()
+
+            # Автоматически закрываем через 2 секунды
+            tooltip.after(2000, tooltip.destroy)
+        except Exception as e:
+            print(f"Ошибка в show_status_tooltip: {e}")
 
     def download_orders_template(self):
         file_path = filedialog.asksaveasfilename(title="Сохранить шаблон", defaultextension=".xlsx",
@@ -2517,8 +2728,8 @@ class ProductionApp:
                 values = [
                     row["ID списания"],
                     row["ID резерва"],
-                    order_display,  # Заказчик | Название
-                    detail_display,  # Название детали
+                    order_display,
+                    detail_display,
                     row["ID материала"],
                     row["Марка"],
                     row["Толщина"],
@@ -2530,7 +2741,7 @@ class ProductionApp:
 
                 self.writeoffs_tree.insert("", "end", values=values)
 
-            self.auto_resize_columns(self.writeoffs_tree)
+            self.auto_resize_columns(self.writeoffs_tree)  # ИСПРАВЛЕНО: убрана лишняя скобка
 
     def add_writeoff(self):
         reservations_df = load_data("Reservations")
@@ -3111,6 +3322,7 @@ class ProductionApp:
         self.refresh_balance()
 
     def refresh_balance(self):
+        """Обновление баланса материалов"""
         # Удаляем ВСЕ строки из баланса
         for i in self.balance_tree.get_children():
             self.balance_tree.delete(i)
@@ -3121,9 +3333,6 @@ class ProductionApp:
         # Если материалов нет - выходим (таблица уже пустая)
         if materials_df.empty:
             return
-
-        # Получаем список существующих ID материалов
-        existing_material_ids = set(materials_df["ID"].astype(int).tolist())
 
         # Получаем состояния фильтров
         show_negative = True
@@ -3137,16 +3346,10 @@ class ProductionApp:
 
         # Проходим ТОЛЬКО по материалам, которые есть на складе
         for _, row in materials_df.iterrows():
-            material_id = int(row["ID"])
-
-            # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: Материал должен быть в списке существующих
-            if material_id not in existing_material_ids:
-                continue
-
             qty = int(row["Количество штук"])
             reserved = int(row["Зарезервировано"])
 
-            # Итого = В наличии - Зарезервировано
+            # ИСПРАВЛЕНИЕ: Итого = В наличии - Зарезервировано
             total = qty - reserved
 
             # Применяем фильтры
@@ -3160,7 +3363,7 @@ class ProductionApp:
             size_str = f"{row['Ширина']} x {row['Длина']}"
 
             values = [
-                f"ID: {material_id}",
+                f"ID: {row['ID']}",
                 row["Марка"],
                 f"{row['Толщина']} мм",
                 size_str,
@@ -3179,8 +3382,7 @@ class ProductionApp:
 
             self.balance_tree.insert("", "end", values=values, tags=(tag,))
 
-        print(
-            f"[Баланс] Обновлено. Материалов на складе: {len(materials_df)}, Отображено в балансе: {len(self.balance_tree.get_children())}")
+        self.auto_resize_columns(self.balance_tree)
 
 if __name__ == "__main__":
     try:
