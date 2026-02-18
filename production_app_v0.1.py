@@ -616,7 +616,7 @@ class ProductionApp:
                 df = df[df["ID"] != item_id]
             save_data("Materials", df)
             self.refresh_materials()
-            self.refresh_balance()
+            self.refresh_balance()  # <-- ЭТА СТРОКА ДОЛЖНА БЫТЬ!
             messagebox.showinfo("Успех", f"Удалено материалов: {count}")
 
     def setup_orders_tab(self):
@@ -743,10 +743,17 @@ class ProductionApp:
             self.order_details_tree.delete(i)
 
         selected = self.orders_tree.selection()
-        if not selected:
+
+        # ЗАЩИТА: Если ничего не выбрано или выбрано несколько - выходим
+        if not selected or len(selected) != 1:
             return
 
-        order_id = self.orders_tree.item(selected)["values"][0]
+        try:
+            order_id = self.orders_tree.item(selected[0])["values"][0]
+        except (IndexError, KeyError, tk.TclError):
+            # Если не удалось получить ID - выходим
+            return
+
         df = load_data("OrderDetails")
 
         if not df.empty:
@@ -1450,23 +1457,39 @@ class ProductionApp:
         scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
         scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
         self.reservations_tree = ttk.Treeview(tree_frame,
-                                              columns=("ID", "Заказ", "Деталь", "Материал", "Марка", "Толщина",
+                                              columns=("ID", "Заказчик | Заказ", "Деталь", "Материал", "Марка",
+                                                       "Толщина",
                                                        "Размер", "Резерв", "Списано", "Остаток", "Дата"),
                                               show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
         scroll_y.config(command=self.reservations_tree.yview)
         scroll_x.config(command=self.reservations_tree.xview)
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
+        columns_widths = {
+            "ID": 60,
+            "Заказчик | Заказ": 250,
+            "Деталь": 150,
+            "Материал": 80,
+            "Марка": 100,
+            "Толщина": 80,
+            "Размер": 120,
+            "Резерв": 80,
+            "Списано": 80,
+            "Остаток": 80,
+            "Дата": 100
+        }
+
         for col in self.reservations_tree["columns"]:
             self.reservations_tree.heading(col, text=col)
-            self.reservations_tree.column(col, width=110, anchor=tk.CENTER)
+            width = columns_widths.get(col, 110)
+            self.reservations_tree.column(col, width=width, anchor=tk.CENTER)
         self.reservations_tree.pack(fill=tk.BOTH, expand=True)
 
         # Панель фильтрации
         self.reservations_filters = self.create_filter_panel(
             self.reservations_frame,
             self.reservations_tree,
-            ["ID", "Заказ", "Деталь", "Марка", "Толщина", "Резерв", "Списано", "Остаток"],
+            ["ID", "Заказчик | Заказ", "Деталь", "Марка", "Толщина", "Резерв", "Списано", "Остаток"],
             self.refresh_reservations
         )
 
@@ -1487,6 +1510,8 @@ class ProductionApp:
                   **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(buttons_frame, text="Удалить резерв", bg='#e74c3c', fg='white', command=self.delete_reservation,
                   **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Редактировать", bg='#f39c12', fg='white', command=self.edit_reservation,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_reservations,
                   **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(buttons_frame, text="Задание на лазер", bg='#e67e22', fg='white', command=self.export_laser_task,
@@ -1496,26 +1521,53 @@ class ProductionApp:
     def refresh_reservations(self):
         for i in self.reservations_tree.get_children():
             self.reservations_tree.delete(i)
-        df = load_data("Reservations")
-        if not df.empty:
+
+        reservations_df = load_data("Reservations")
+        orders_df = load_data("Orders")
+
+        if not reservations_df.empty:
             show_fully_written_off = True
 
             if hasattr(self, 'reservations_toggles') and self.reservations_toggles:
                 show_fully_written_off = self.reservations_toggles.get('show_fully_written_off',
                                                                        tk.BooleanVar(value=True)).get()
 
-            for index, row in df.iterrows():
+            for index, row in reservations_df.iterrows():
                 remainder = int(row["Остаток к списанию"])
                 if not show_fully_written_off and remainder == 0:
                     continue
 
+                # Получаем информацию о заказе
+                order_id = int(row["ID заказа"])
+                order_display = f"#{order_id}"
+
+                if not orders_df.empty:
+                    order_row = orders_df[orders_df["ID заказа"] == order_id]
+                    if not order_row.empty:
+                        customer = order_row.iloc[0]["Заказчик"]
+                        order_name = order_row.iloc[0]["Название заказа"]
+                        order_display = f"{customer} | {order_name}"
+
                 size_str = f"{row['Ширина']}x{row['Длина']}"
                 detail_name = row.get("Название детали", "Не указана") if "Название детали" in row else "Не указана"
-                values = [row["ID резерва"], row["ID заказа"], detail_name, row["ID материала"],
-                          row["Марка"], row["Толщина"], size_str, row["Зарезервировано штук"],
-                          row["Списано"], row["Остаток к списанию"], row["Дата резерва"]]
+
+                values = [
+                    row["ID резерва"],
+                    order_display,  # Вместо ID заказа показываем "Заказчик | Название"
+                    detail_name,
+                    row["ID материала"],
+                    row["Марка"],
+                    row["Толщина"],
+                    size_str,
+                    row["Зарезервировано штук"],
+                    row["Списано"],
+                    row["Остаток к списанию"],
+                    row["Дата резерва"]
+                ]
+
                 self.reservations_tree.insert("", "end", values=values)
-                self.auto_resize_columns(self.reservations_tree)
+
+            self.auto_resize_columns(self.reservations_tree)
 
     def add_reservation(self):
         orders_df = load_data("Orders")
@@ -1535,7 +1587,10 @@ class ProductionApp:
         order_frame.pack(fill=tk.X, padx=20, pady=5)
         tk.Label(order_frame, text="Заказ:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
 
-        all_order_options = [f"{int(row['ID заказа'])} - {row['Название заказа']}" for _, row in orders_df.iterrows()]
+        all_order_options = [
+            f"ID:{int(row['ID заказа'])} | {row['Заказчик']} | {row['Название заказа']}"
+            for _, row in orders_df.iterrows()
+        ]
 
         order_search_var = tk.StringVar()
         order_search_entry = tk.Entry(order_frame, textvariable=order_search_var, font=("Arial", 10), width=35)
@@ -1727,7 +1782,8 @@ class ProductionApp:
                     messagebox.showwarning("Предупреждение", "Выберите материал!")
                     return
 
-                order_id = int(order_value.split(" - ")[0])
+                # Парсим ID из формата "ID:1001 | Заказчик | Название"
+                order_id = int(order_value.split("ID:")[1].split(" | ")[0])
                 quantity = int(qty_entry.get())
 
                 # Получаем ID и название детали
@@ -1825,6 +1881,154 @@ class ProductionApp:
             self.refresh_reservations()
             self.refresh_balance()
             messagebox.showinfo("Успех", f"Удалено резервов: {count}")
+
+    def edit_reservation(self):
+        """Редактирование резервирования"""
+        selected = self.reservations_tree.selection()
+        if not selected:
+            messagebox.showwarning("Предупреждение", "Выберите резерв для редактирования")
+            return
+
+        reserve_id = self.reservations_tree.item(selected)["values"][0]
+        reservations_df = load_data("Reservations")
+        reserve_row = reservations_df[reservations_df["ID резерва"] == reserve_id].iloc[0]
+
+        edit_window = tk.Toplevel(self.root)
+        edit_window.title("Редактировать резерв")
+        edit_window.geometry("550x600")
+        edit_window.configure(bg='#ecf0f1')
+
+        tk.Label(edit_window, text=f"Редактирование резерва #{reserve_id}",
+                 font=("Arial", 12, "bold"), bg='#ecf0f1').pack(pady=10)
+
+        # Информация о заказе (только для чтения)
+        orders_df = load_data("Orders")
+        order_id = int(reserve_row["ID заказа"])
+        order_info = f"Заказ #{order_id}"
+
+        if not orders_df.empty:
+            order_row = orders_df[orders_df["ID заказа"] == order_id]
+            if not order_row.empty:
+                customer = order_row.iloc[0]["Заказчик"]
+                order_name = order_row.iloc[0]["Название заказа"]
+                order_info = f"{customer} | {order_name}"
+
+        info_frame = tk.LabelFrame(edit_window, text="Информация о заказе (не редактируется)",
+                                   bg='#e8f4f8', font=("Arial", 9, "bold"))
+        info_frame.pack(fill=tk.X, padx=20, pady=10)
+        tk.Label(info_frame, text=order_info, bg='#e8f4f8', font=("Arial", 10)).pack(padx=10, pady=5)
+
+        # Деталь (только для чтения)
+        detail_name = reserve_row.get("Название детали", "Не указана")
+        if pd.isna(detail_name) or detail_name == "" or detail_name == "Не указана":
+            detail_name = "Без привязки к детали"
+
+        tk.Label(info_frame, text=f"Деталь: {detail_name}", bg='#e8f4f8', font=("Arial", 9)).pack(padx=10, pady=2)
+
+        # Материал (только для чтения)
+        material_info = f"{reserve_row['Марка']} {reserve_row['Толщина']}мм {reserve_row['Ширина']}x{reserve_row['Длина']}"
+        tk.Label(info_frame, text=f"Материал: {material_info}", bg='#e8f4f8', font=("Arial", 9)).pack(padx=10, pady=2)
+
+        # Редактируемое поле: Количество зарезервировано
+        qty_frame = tk.Frame(edit_window, bg='#ecf0f1')
+        qty_frame.pack(fill=tk.X, padx=20, pady=10)
+        tk.Label(qty_frame, text="Зарезервировано (шт):", width=25, anchor='w',
+                 bg='#ecf0f1', font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+        qty_entry = tk.Entry(qty_frame, font=("Arial", 10))
+        qty_entry.insert(0, str(int(reserve_row["Зарезервировано штук"])))
+        qty_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
+        # Информация о списании
+        written_off = int(reserve_row["Списано"])
+        remainder = int(reserve_row["Остаток к списанию"])
+
+        stats_frame = tk.LabelFrame(edit_window, text="Статистика", bg='#fff3cd', font=("Arial", 9, "bold"))
+        stats_frame.pack(fill=tk.X, padx=20, pady=10)
+        tk.Label(stats_frame, text=f"Уже списано: {written_off} шт",
+                 bg='#fff3cd', font=("Arial", 9)).pack(anchor='w', padx=10, pady=2)
+        tk.Label(stats_frame, text=f"Остаток к списанию: {remainder} шт",
+                 bg='#fff3cd', font=("Arial", 9)).pack(anchor='w', padx=10, pady=2)
+
+        # Предупре��дение
+        warning_frame = tk.Frame(edit_window, bg='#ffcccc', relief=tk.RIDGE, borderwidth=2)
+        warning_frame.pack(fill=tk.X, padx=20, pady=10)
+        tk.Label(warning_frame, text="ВАЖНО!", font=("Arial", 9, "bold"),
+                 bg='#ffcccc', fg='#c0392b').pack(anchor='w', padx=5, pady=2)
+        tk.Label(warning_frame, text="• Нельзя уменьшить количество ниже уже списанного",
+                 font=("Arial", 8), bg='#ffcccc', fg='#c0392b').pack(anchor='w', padx=10)
+        tk.Label(warning_frame, text="• Изменение количества пересчитает остаток к списанию",
+                 font=("Arial", 8), bg='#ffcccc', fg='#c0392b').pack(anchor='w', padx=10)
+        tk.Label(warning_frame, text="• Изменение влияет на баланс материалов на складе",
+                 font=("Arial", 8), bg='#ffcccc', fg='#c0392b').pack(anchor='w', padx=10)
+
+        def save_changes():
+            try:
+                new_qty = int(qty_entry.get().strip())
+
+                if new_qty < written_off:
+                    messagebox.showerror("Ошибка",
+                                         f"Нельзя установить количество ({new_qty}) меньше уже списанного ({written_off})!")
+                    return
+
+                if new_qty <= 0:
+                    messagebox.showerror("Ошибка", "Количество должно быть больше нуля!")
+                    return
+
+                old_qty = int(reserve_row["Зарезервировано штук"])
+                difference = new_qty - old_qty
+
+                if difference == 0:
+                    messagebox.showinfo("Информация", "Изменений не было")
+                    edit_window.destroy()
+                    return
+
+                # Подтверждение
+                if not messagebox.askyesno("Подтверждение",
+                                           f"Изменить количество с {old_qty} на {new_qty} шт?\n\n"
+                                           f"Разница: {'+' if difference > 0 else ''}{difference} шт\n"
+                                           f"Новый остаток к списанию: {new_qty - written_off} шт"):
+                    return
+
+                # Обновляем резерв
+                new_remainder = new_qty - written_off
+                reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Зарезервировано штук"] = new_qty
+                reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Остаток к списанию"] = new_remainder
+                save_data("Reservations", reservations_df)
+
+                # Обновляем материал на складе (если не вручную добавленный)
+                material_id = int(reserve_row["ID материала"])
+                if material_id != -1:
+                    materials_df = load_data("Materials")
+                    if not materials_df[materials_df["ID"] == material_id].empty:
+                        mat_row = materials_df[materials_df["ID"] == material_id].iloc[0]
+                        current_reserved = int(mat_row["Зарезервировано"])
+                        current_available = int(mat_row["Доступно"])
+
+                        new_reserved = current_reserved + difference
+                        new_available = current_available - difference
+
+                        materials_df.loc[materials_df["ID"] == material_id, "Зарезервировано"] = new_reserved
+                        materials_df.loc[materials_df["ID"] == material_id, "Доступно"] = new_available
+                        save_data("Materials", materials_df)
+                        self.refresh_materials()
+
+                self.refresh_reservations()
+                self.refresh_balance()
+                edit_window.destroy()
+                messagebox.showinfo("Успех",
+                                    f"Резерв обновлен!\n\n"
+                                    f"Новое количество: {new_qty} шт\n"
+                                    f"Остаток к списанию: {new_remainder} шт")
+
+            except ValueError:
+                messagebox.showerror("Ошибка", "Проверьте правильность ввода числовых значений!")
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось обновить резерв: {e}")
+                import traceback
+                traceback.print_exc()
+
+        tk.Button(edit_window, text="Сохранить изменения", bg='#f39c12', fg='white',
+                  font=("Arial", 12, "bold"), command=save_changes).pack(pady=15)
 
     def export_laser_task(self):
         """Формирование задания на лазер из резервов"""
@@ -2068,15 +2272,17 @@ class ProductionApp:
         scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
         scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
         self.writeoffs_tree = ttk.Treeview(tree_frame,
-                                           columns=("ID", "ID резерва", "Заказ", "Материал", "Марка", "Толщина",
+                                           columns=("ID", "ID резерва", "Заказ", "Деталь", "Материал", "Марка",
+                                                    "Толщина",
                                                     "Размер", "Количество", "Дата", "Комментарий"),
                                            show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
         scroll_y.config(command=self.writeoffs_tree.yview)
         scroll_x.config(command=self.writeoffs_tree.xview)
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
-        columns_config = {"ID": 50, "ID резерва": 80, "Заказ": 70, "Материал": 80, "Марка": 90, "Толщина": 70,
-                          "Размер": 110, "Количество": 90, "Дата": 140, "Комментарий": 180}
+        columns_config = {"ID": 50, "ID резерва": 80, "Заказ": 200, "Деталь": 150, "Материал": 80,
+                          "Марка": 90, "Толщина": 70, "Размер": 110, "Количество": 90,
+                          "Дата": 140, "Комментарий": 180}
         for col, width in columns_config.items():
             self.writeoffs_tree.heading(col, text=col)
             self.writeoffs_tree.column(col, width=width, anchor=tk.CENTER)
@@ -2086,7 +2292,7 @@ class ProductionApp:
         self.writeoffs_filters = self.create_filter_panel(
             self.writeoffs_frame,
             self.writeoffs_tree,
-            ["ID", "ID резерва", "Заказ", "Марка", "Толщина", "Количество"],
+            ["ID", "ID резерва", "Заказ", "Деталь", "Марка", "Толщина", "Количество"],
             self.refresh_writeoffs
         )
 
@@ -2097,6 +2303,8 @@ class ProductionApp:
                   **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(buttons_frame, text="Удалить списание", bg='#e74c3c', fg='white', command=self.delete_writeoff,
                   **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="Редактировать", bg='#f39c12', fg='white', command=self.edit_writeoff,
+                  **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_writeoffs,
                   **btn_style).pack(side=tk.LEFT, padx=5)
         self.refresh_writeoffs()
@@ -2104,14 +2312,57 @@ class ProductionApp:
     def refresh_writeoffs(self):
         for i in self.writeoffs_tree.get_children():
             self.writeoffs_tree.delete(i)
-        df = load_data("WriteOffs")
-        if not df.empty:
-            for index, row in df.iterrows():
+
+        writeoffs_df = load_data("WriteOffs")
+        orders_df = load_data("Orders")
+        reservations_df = load_data("Reservations")
+
+        if not writeoffs_df.empty:
+            for index, row in writeoffs_df.iterrows():
+                # Получаем информацию о заказе
+                order_id = int(row["ID заказа"])
+                order_display = f"#{order_id}"
+
+                if not orders_df.empty:
+                    order_row = orders_df[orders_df["ID заказа"] == order_id]
+                    if not order_row.empty:
+                        customer = order_row.iloc[0]["Заказчик"]
+                        order_name = order_row.iloc[0]["Название заказа"]
+                        order_display = f"{customer} | {order_name}"
+
+                # Получаем информацию о детали из резерва
+                reserve_id = int(row["ID резерва"])
+                detail_display = "Без детали"
+
+                if not reservations_df.empty:
+                    reserve_row = reservations_df[reservations_df["ID резерва"] == reserve_id]
+                    if not reserve_row.empty:
+                        detail_name = reserve_row.iloc[0].get("Название детали", "Без детали")
+                        detail_id = reserve_row.iloc[0].get("ID детали", -1)
+
+                        if pd.notna(
+                                detail_name) and detail_name != "" and detail_name != "Не указана" and detail_id != -1:
+                            detail_display = detail_name
+
                 size_str = f"{row['Ширина']}x{row['Длина']}"
-                values = [row["ID списания"], row["ID резерва"], row["ID заказа"], row["ID материала"], row["Марка"],
-                          row["Толщина"], size_str, row["Количество"], row["Дата списания"], row["Комментарий"]]
+
+                values = [
+                    row["ID списания"],
+                    row["ID резерва"],
+                    order_display,  # Заказчик | Название
+                    detail_display,  # Название детали
+                    row["ID материала"],
+                    row["Марка"],
+                    row["Толщина"],
+                    size_str,
+                    row["Количество"],
+                    row["Дата списания"],
+                    row["Комментарий"]
+                ]
+
                 self.writeoffs_tree.insert("", "end", values=values)
-                self.auto_resize_columns(self.writeoffs_tree)
+
+            self.auto_resize_columns(self.writeoffs_tree)
 
     def add_writeoff(self):
         reservations_df = load_data("Reservations")
@@ -2184,8 +2435,38 @@ class ProductionApp:
             side=tk.LEFT)
 
         all_reserve_options = []
+
+        # Загружаем заказы для отображения заказчика и названия
+        orders_df = load_data("Orders")
+
         for _, row in active_reserves.iterrows():
-            reserve_str = f"Резерв #{int(row['ID резерва'])} - Заказ {int(row['ID заказа'])} - {row['Марка']} {row['Толщина']}мм (осталось: {int(row['Остаток к списанию'])} шт)"
+            order_id = int(row['ID заказа'])
+
+            # Ищем информацию о заказе
+            order_info = ""
+            if not orders_df.empty:
+                order_row = orders_df[orders_df["ID заказа"] == order_id]
+                if not order_row.empty:
+                    customer = order_row.iloc[0]["Заказчик"]
+                    order_name = order_row.iloc[0]["Название заказа"]
+                    order_info = f"{customer} | {order_name}"
+                else:
+                    order_info = f"Заказ #{order_id}"
+            else:
+                order_info = f"Заказ #{order_id}"
+
+            # Получаем название детали
+            detail_name = row.get("Название детали", "Без учета деталей")
+            detail_id = row.get("ID детали", -1)
+
+            # Проверяем, привязана ли деталь
+            if pd.isna(detail_name) or detail_name == "" or detail_name == "Не указана" or detail_id == -1:
+                detail_info = "Без детали"
+            else:
+                detail_info = f"Деталь: {detail_name}"
+
+            # Формируем строку с информацией о детали
+            reserve_str = f"Резерв #{int(row['ID резерва'])} | {order_info} | {detail_info} | {row['Марка']} {row['Толщина']}мм | Осталось: {int(row['Остаток к списанию'])} шт"
             all_reserve_options.append(reserve_str)
 
         search_container = tk.Frame(reserve_frame, bg='#ecf0f1')
@@ -2253,7 +2534,8 @@ class ProductionApp:
                     messagebox.showwarning("Предупреждение", "Выберите резерв!")
                     return
 
-                reserve_id = int(reserve_value.split(" - ")[0].replace("Резерв #", ""))
+                # Парсим ID из формата "Резерв #123 | ..."
+                reserve_id = int(reserve_value.split("Резерв #")[1].split(" | ")[0])
                 quantity = int(qty_entry.get())
                 comment = comment_entry.get().strip()
 
@@ -2384,6 +2666,216 @@ class ProductionApp:
             self.refresh_balance()
             messagebox.showinfo("Успех", f"Отменено списаний: {count}")
 
+    def edit_writeoff(self):
+        """Редактирование списания"""
+        selected = self.writeoffs_tree.selection()
+        if not selected:
+            messagebox.showwarning("Предупреждение", "Выберите списание для редактирования")
+            return
+
+        writeoff_id = self.writeoffs_tree.item(selected)["values"][0]
+        writeoffs_df = load_data("WriteOffs")
+        writeoff_row = writeoffs_df[writeoffs_df["ID списания"] == writeoff_id].iloc[0]
+
+        edit_window = tk.Toplevel(self.root)
+        edit_window.title("Редактировать списание")
+        edit_window.geometry("550x650")
+        edit_window.configure(bg='#ecf0f1')
+
+        tk.Label(edit_window, text=f"Редактирование списания #{writeoff_id}",
+                 font=("Arial", 12, "bold"), bg='#ecf0f1').pack(pady=10)
+
+        # Информация о резерве (только для чтения)
+        reserve_id = int(writeoff_row["ID резерва"])
+        reservations_df = load_data("Reservations")
+        orders_df = load_data("Orders")
+
+        reserve_info = f"Резерв #{reserve_id}"
+        order_info = ""
+        detail_info = ""
+
+        if not reservations_df.empty:
+            reserve_row = reservations_df[reservations_df["ID резерва"] == reserve_id]
+            if not reserve_row.empty:
+                reserve_data = reserve_row.iloc[0]
+                order_id = int(reserve_data["ID заказа"])
+
+                if not orders_df.empty:
+                    order_row = orders_df[orders_df["ID заказа"] == order_id]
+                    if not order_row.empty:
+                        customer = order_row.iloc[0]["Заказчик"]
+                        order_name = order_row.iloc[0]["Название заказа"]
+                        order_info = f"{customer} | {order_name}"
+
+                detail_name = reserve_data.get("Название детали", "Без детали")
+                if pd.notna(detail_name) and detail_name != "" and detail_name != "Не указана":
+                    detail_info = f"Деталь: {detail_name}"
+                else:
+                    detail_info = "Без привязки к детали"
+
+        info_frame = tk.LabelFrame(edit_window, text="Информация (не редактируется)",
+                                   bg='#e8f4f8', font=("Arial", 9, "bold"))
+        info_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        if order_info:
+            tk.Label(info_frame, text=f"Заказ: {order_info}", bg='#e8f4f8', font=("Arial", 9)).pack(padx=10, pady=2,
+                                                                                                    anchor='w')
+        if detail_info:
+            tk.Label(info_frame, text=detail_info, bg='#e8f4f8', font=("Arial", 9)).pack(padx=10, pady=2, anchor='w')
+
+        material_info = f"{writeoff_row['Марка']} {writeoff_row['Толщина']}мм {writeoff_row['Ширина']}x{writeoff_row['Длина']}"
+        tk.Label(info_frame, text=f"Материал: {material_info}", bg='#e8f4f8', font=("Arial", 9)).pack(padx=10, pady=2,
+                                                                                                      anchor='w')
+        tk.Label(info_frame, text=f"Дата списания: {writeoff_row['Дата списания']}",
+                 bg='#e8f4f8', font=("Arial", 9)).pack(padx=10, pady=2, anchor='w')
+
+        # Редактируемое поле: Количество
+        qty_frame = tk.Frame(edit_window, bg='#ecf0f1')
+        qty_frame.pack(fill=tk.X, padx=20, pady=10)
+        tk.Label(qty_frame, text="Количество (шт):", width=25, anchor='w',
+                 bg='#ecf0f1', font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+        qty_entry = tk.Entry(qty_frame, font=("Arial", 10))
+        qty_entry.insert(0, str(int(writeoff_row["Количество"])))
+        qty_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
+        # Редактируемое поле: Комментарий
+        comment_frame = tk.Frame(edit_window, bg='#ecf0f1')
+        comment_frame.pack(fill=tk.X, padx=20, pady=10)
+        tk.Label(comment_frame, text="Комментарий:", width=25, anchor='w',
+                 bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
+        comment_entry = tk.Entry(comment_frame, font=("Arial", 10))
+        comment_entry.insert(0, str(writeoff_row["Комментарий"]))
+        comment_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+
+        # Информация о резерве
+        if not reservations_df.empty and not reserve_row.empty:
+            reserve_data = reserve_row.iloc[0]
+            reserve_total = int(reserve_data["Зарезервировано штук"])
+            reserve_written = int(reserve_data["Списано"])
+            reserve_remainder = int(reserve_data["Остаток к списанию"])
+
+            stats_frame = tk.LabelFrame(edit_window, text="Статистика резерва",
+                                        bg='#fff3cd', font=("Arial", 9, "bold"))
+            stats_frame.pack(fill=tk.X, padx=20, pady=10)
+            tk.Label(stats_frame, text=f"Всего в резерве: {reserve_total} шт",
+                     bg='#fff3cd', font=("Arial", 9)).pack(anchor='w', padx=10, pady=2)
+            tk.Label(stats_frame, text=f"Списано всего: {reserve_written} шт",
+                     bg='#fff3cd', font=("Arial", 9)).pack(anchor='w', padx=10, pady=2)
+            tk.Label(stats_frame, text=f"Остаток к списанию: {reserve_remainder} шт",
+                     bg='#fff3cd', font=("Arial", 9)).pack(anchor='w', padx=10, pady=2)
+
+        # Предупреждение
+        warning_frame = tk.Frame(edit_window, bg='#ffcccc', relief=tk.RIDGE, borderwidth=2)
+        warning_frame.pack(fill=tk.X, padx=20, pady=10)
+        tk.Label(warning_frame, text="ВАЖНО!", font=("Arial", 9, "bold"),
+                 bg='#ffcccc', fg='#c0392b').pack(anchor='w', padx=5, pady=2)
+        tk.Label(warning_frame, text="• Изменение количества пересчитает баланс материалов",
+                 font=("Arial", 8), bg='#ffcccc', fg='#c0392b').pack(anchor='w', padx=10)
+        tk.Label(warning_frame, text="• Изменение влияет на остаток резерва к списанию",
+                 font=("Arial", 8), bg='#ffcccc', fg='#c0392b').pack(anchor='w', padx=10)
+
+        def save_changes():
+            try:
+                new_qty = int(qty_entry.get().strip())
+                new_comment = comment_entry.get().strip()
+
+                if new_qty <= 0:
+                    messagebox.showerror("Ошибка", "Количество должно быть больше нуля!")
+                    return
+
+                old_qty = int(writeoff_row["Количество"])
+                difference = new_qty - old_qty
+
+                # Проверяем, не превысит ли новое количество доступный остаток резерва
+                if not reservations_df.empty and not reserve_row.empty:
+                    reserve_data = reserve_row.iloc[0]
+                    reserve_remainder = int(reserve_data["Остаток к списанию"])
+
+                    # Доступно = текущий остаток + старое списание
+                    max_available = reserve_remainder + old_qty
+
+                    if new_qty > max_available:
+                        messagebox.showerror("Ошибка",
+                                             f"Нельзя списать {new_qty} шт!\n"
+                                             f"Максимально доступно: {max_available} шт")
+                        return
+
+                if difference == 0 and new_comment == str(writeoff_row["Комментарий"]):
+                    messagebox.showinfo("Информация", "Изменений не было")
+                    edit_window.destroy()
+                    return
+
+                # Подтверждение
+                msg = f"Сохранить и��менения?\n\n"
+                if difference != 0:
+                    msg += f"Количество: {old_qty} → {new_qty} шт (разница: {'+' if difference > 0 else ''}{difference})\n"
+                if new_comment != str(writeoff_row["Комментарий"]):
+                    msg += f"Комментарий изменен"
+
+                if not messagebox.askyesno("Подтверждение", msg):
+                    return
+
+                # Обновляем списание
+                writeoffs_df.loc[writeoffs_df["ID списания"] == writeoff_id, "Количество"] = new_qty
+                writeoffs_df.loc[writeoffs_df["ID списания"] == writeoff_id, "Комментарий"] = new_comment
+                save_data("WriteOffs", writeoffs_df)
+
+                # Если количество изменилось - обновляем резерв и материал
+                if difference != 0:
+                    # Обновляем резерв
+                    if not reservations_df.empty and not reserve_row.empty:
+                        reserve_data = reserve_row.iloc[0]
+                        current_written = int(reserve_data["Списано"])
+                        current_remainder = int(reserve_data["Остаток к списанию"])
+
+                        new_written = current_written + difference
+                        new_remainder = current_remainder - difference
+
+                        reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Списано"] = new_written
+                        reservations_df.loc[
+                            reservations_df["ID резерва"] == reserve_id, "Остаток к списанию"] = new_remainder
+                        save_data("Reservations", reservations_df)
+
+                    # Обновляем материал (если не вручную добавленный)
+                    material_id = int(writeoff_row["ID материала"])
+                    if material_id != -1:
+                        materials_df = load_data("Materials")
+                        if not materials_df[materials_df["ID"] == material_id].empty:
+                            mat_row = materials_df[materials_df["ID"] == material_id].iloc[0]
+                            current_qty = int(mat_row["Количество штук"])
+                            current_reserved = int(mat_row["Зарезервировано"])
+
+                            # Разница списания влияет на количество и резерв
+                            new_mat_qty = current_qty - difference
+                            new_reserved = current_reserved - difference
+
+                            materials_df.loc[materials_df["ID"] == material_id, "Количество штук"] = new_mat_qty
+                            materials_df.loc[materials_df["ID"] == material_id, "Зарезервировано"] = new_reserved
+
+                            # Пересчитываем площадь
+                            area_per_piece = float(mat_row["Длина"]) * float(mat_row["Ширина"]) / 1_000_000
+                            new_area = new_mat_qty * area_per_piece
+                            materials_df.loc[materials_df["ID"] == material_id, "Общая площадь"] = round(new_area, 2)
+
+                            save_data("Materials", materials_df)
+                            self.refresh_materials()
+
+                self.refresh_reservations()
+                self.refresh_writeoffs()
+                self.refresh_balance()
+                edit_window.destroy()
+                messagebox.showinfo("Успех", f"Списание #{writeoff_id} обновлено!")
+
+            except ValueError:
+                messagebox.showerror("Ошибка", "Проверьте правильность ввода числовых значений!")
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось обновить списание: {e}")
+                import traceback
+                traceback.print_exc()
+
+        tk.Button(edit_window, text="Сохранить изменения", bg='#f39c12', fg='white',
+                  font=("Arial", 12, "bold"), command=save_changes).pack(pady=15)
+
     def create_visibility_toggles(self, parent_frame, tree_widget, toggles_config, refresh_callback):
         """Создание переключателей видимости для таблиц"""
         toggles_frame = tk.Frame(parent_frame, bg='white')
@@ -2451,10 +2943,19 @@ class ProductionApp:
         self.refresh_balance()
 
     def refresh_balance(self):
+        # Удаляем ВСЕ строки из баланса
         for i in self.balance_tree.get_children():
             self.balance_tree.delete(i)
 
+        # Загружаем актуальные данные со склада
         materials_df = load_data("Materials")
+
+        # Если материалов нет - выходим (таблица уже пустая)
+        if materials_df.empty:
+            return
+
+        # Получаем список существующих ID материалов
+        existing_material_ids = set(materials_df["ID"].astype(int).tolist())
 
         # Получаем состояния фильтров
         show_negative = True
@@ -2466,43 +2967,52 @@ class ProductionApp:
             show_zero = self.balance_toggles.get('show_zero', tk.BooleanVar(value=True)).get()
             show_positive = self.balance_toggles.get('show_positive', tk.BooleanVar(value=True)).get()
 
-        if not materials_df.empty:
-            for _, row in materials_df.iterrows():
-                qty = int(row["Количество штук"])
-                reserved = int(row["Зарезервировано"])
+        # Проходим ТОЛЬКО по материалам, которые есть на складе
+        for _, row in materials_df.iterrows():
+            material_id = int(row["ID"])
 
-                # ИСПРАВЛЕНИЕ: Итого = В наличии - Зарезервировано
-                total = qty - reserved
+            # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: Материал должен быть в списке существующих
+            if material_id not in existing_material_ids:
+                continue
 
-                # Применяем фильтры
-                if total < 0 and not show_negative:
-                    continue
-                if total == 0 and not show_zero:
-                    continue
-                if total > 0 and not show_positive:
-                    continue
+            qty = int(row["Количество штук"])
+            reserved = int(row["Зарезервировано"])
 
-                size_str = f"{row['Ширина']} x {row['Длина']}"
+            # Итого = В наличии - Зарезервировано
+            total = qty - reserved
 
-                values = [
-                    f"ID: {row['ID']}",
-                    row["Марка"],
-                    f"{row['Толщина']} мм",
-                    size_str,
-                    qty,
-                    reserved,
-                    total
-                ]
+            # Применяем фильтры
+            if total < 0 and not show_negative:
+                continue
+            if total == 0 and not show_zero:
+                continue
+            if total > 0 and not show_positive:
+                continue
 
-                # Определяем цвет строки
-                if total < 0:
-                    tag = 'negative'
-                elif total == 0:
-                    tag = 'zero'
-                else:
-                    tag = 'positive'
+            size_str = f"{row['Ширина']} x {row['Длина']}"
 
-                self.balance_tree.insert("", "end", values=values, tags=(tag,))
+            values = [
+                f"ID: {material_id}",
+                row["Марка"],
+                f"{row['Толщина']} мм",
+                size_str,
+                qty,
+                reserved,
+                total
+            ]
+
+            # Определяем цвет строки
+            if total < 0:
+                tag = 'negative'
+            elif total == 0:
+                tag = 'zero'
+            else:
+                tag = 'positive'
+
+            self.balance_tree.insert("", "end", values=values, tags=(tag,))
+
+        print(
+            f"[Баланс] Обновлено. Материалов на складе: {len(materials_df)}, Отображено в балансе: {len(self.balance_tree.get_children())}")
 
 if __name__ == "__main__":
     try:
