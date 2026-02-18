@@ -1883,7 +1883,7 @@ class ProductionApp:
             messagebox.showinfo("Успех", f"Удалено резервов: {count}")
 
     def edit_reservation(self):
-        """Редактирование резервирования"""
+        """Редактирование резервирования с возможностью изменения заказа и детали"""
         selected = self.reservations_tree.selection()
         if not selected:
             messagebox.showwarning("Предупреждение", "Выберите резерв для редактирования")
@@ -1895,41 +1895,165 @@ class ProductionApp:
 
         edit_window = tk.Toplevel(self.root)
         edit_window.title("Редактировать резерв")
-        edit_window.geometry("550x600")
+        edit_window.geometry("650x800")
         edit_window.configure(bg='#ecf0f1')
 
-        tk.Label(edit_window, text=f"Редактирование резерва #{reserve_id}",
-                 font=("Arial", 12, "bold"), bg='#ecf0f1').pack(pady=10)
+        tk.Label(edit_window, text=f"Редактирован��е резерва #{reserve_id}",
+                 font=("Arial", 12, "bold"), bg='#ecf0f1', fg='#2c3e50').pack(pady=10)
 
-        # Информация о заказе (только для чтения)
+        # Загружаем данные
         orders_df = load_data("Orders")
-        order_id = int(reserve_row["ID заказа"])
-        order_info = f"Заказ #{order_id}"
+        order_details_df = load_data("OrderDetails")
+
+        # Текущие данные резерва
+        current_order_id = int(reserve_row["ID заказа"])
+        current_detail_id = reserve_row.get("ID детали", -1)
+        if pd.isna(current_detail_id):
+            current_detail_id = -1
+        else:
+            current_detail_id = int(current_detail_id)
+
+        written_off = int(reserve_row["Списано"])
+
+        # === ЗАКАЗ ===
+        order_frame = tk.LabelFrame(edit_window, text="Заказ", bg='#ecf0f1', font=("Arial", 10, "bold"))
+        order_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        tk.Label(order_frame, text="Выберите заказ:", bg='#ecf0f1', font=("Arial", 9)).pack(anchor='w', padx=10, pady=5)
+
+        # Формируем список заказов
+        all_order_options = []
+        order_map = {}
 
         if not orders_df.empty:
-            order_row = orders_df[orders_df["ID заказа"] == order_id]
-            if not order_row.empty:
-                customer = order_row.iloc[0]["Заказчик"]
-                order_name = order_row.iloc[0]["Название заказа"]
-                order_info = f"{customer} | {order_name}"
+            for _, row in orders_df.iterrows():
+                order_id = int(row['ID заказа'])
+                display_text = f"ID:{order_id} | {row['Заказчик']} | {row['Название заказа']}"
+                all_order_options.append(display_text)
+                order_map[display_text] = order_id
 
-        info_frame = tk.LabelFrame(edit_window, text="Информация о заказе (не редактируется)",
-                                   bg='#e8f4f8', font=("Arial", 9, "bold"))
-        info_frame.pack(fill=tk.X, padx=20, pady=10)
-        tk.Label(info_frame, text=order_info, bg='#e8f4f8', font=("Arial", 10)).pack(padx=10, pady=5)
+        order_search_var = tk.StringVar()
+        order_search_entry = tk.Entry(order_frame, textvariable=order_search_var, font=("Arial", 9))
+        order_search_entry.pack(fill=tk.X, padx=10, pady=5)
 
-        # Деталь (только для чтения)
-        detail_name = reserve_row.get("Название детали", "Не указана")
-        if pd.isna(detail_name) or detail_name == "" or detail_name == "Не указана":
-            detail_name = "Без привязки к детали"
+        order_listbox = tk.Listbox(order_frame, height=4, font=("Arial", 9))
+        order_listbox.pack(fill=tk.BOTH, padx=10, pady=5)
 
-        tk.Label(info_frame, text=f"Деталь: {detail_name}", bg='#e8f4f8', font=("Arial", 9)).pack(padx=10, pady=2)
+        for option in all_order_options:
+            order_listbox.insert(tk.END, option)
 
-        # Материал (только для чтения)
+        selected_order = {"value": None, "id": current_order_id}
+
+        def on_order_search(*args):
+            search_text = order_search_var.get().lower()
+            order_listbox.delete(0, tk.END)
+            for option in all_order_options:
+                if search_text in option.lower():
+                    order_listbox.insert(tk.END, option)
+
+        def on_select_order(event):
+            try:
+                selection = order_listbox.get(order_listbox.curselection())
+                selected_order["value"] = selection
+                selected_order["id"] = order_map[selection]
+                order_search_var.set(selection)
+                update_details_list()
+            except:
+                pass
+
+        order_search_var.trace('w', on_order_search)
+        order_listbox.bind('<<ListboxSelect>>', on_select_order)
+        order_listbox.bind('<Double-Button-1>', on_select_order)
+
+        # Устанавливаем текущий заказ
+        for i, option in enumerate(all_order_options):
+            if order_map[option] == current_order_id:
+                order_listbox.selection_set(i)
+                order_listbox.see(i)
+                order_search_var.set(option)
+                selected_order["value"] = option
+                break
+
+        # === ДЕТАЛЬ ===
+        detail_frame = tk.LabelFrame(edit_window, text="Деталь", bg='#ecf0f1', font=("Arial", 10, "bold"))
+        detail_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        tk.Label(detail_frame, text="Выберите деталь:", bg='#ecf0f1', font=("Arial", 9)).pack(anchor='w', padx=10,
+                                                                                              pady=5)
+
+        detail_var = tk.StringVar()
+        detail_combo = ttk.Combobox(detail_frame, textvariable=detail_var, font=("Arial", 9),
+                                    state="readonly", width=50)
+        detail_combo.pack(fill=tk.X, padx=10, pady=5)
+
+        selected_detail = {"id": current_detail_id, "name": None}
+
+        def update_details_list():
+            detail_combo['values'] = []
+            detail_var.set("")
+            selected_detail["id"] = -1
+            selected_detail["name"] = None
+
+            order_id = selected_order["id"]
+            if not order_id:
+                return
+
+            try:
+                if not order_details_df.empty:
+                    details = order_details_df[order_details_df["ID заказа"] == order_id]
+
+                    if not details.empty:
+                        detail_options = ["[Без привязки к детали]"]
+                        detail_options.extend([f"ID:{int(row['ID'])} - {row['Название детали']}"
+                                               for _, row in details.iterrows()])
+                        detail_combo['values'] = detail_options
+
+                        # Пытаемся установить текущую деталь
+                        if current_detail_id != -1:
+                            for opt in detail_options:
+                                if opt.startswith(f"ID:{current_detail_id} -"):
+                                    detail_combo.set(opt)
+                                    selected_detail["id"] = current_detail_id
+                                    selected_detail["name"] = opt.split(" - ")[1]
+                                    break
+                        else:
+                            detail_combo.current(0)
+                    else:
+                        detail_combo['values'] = ["[Нет деталей у заказа]"]
+                        detail_combo.current(0)
+                else:
+                    detail_combo['values'] = ["[Нет деталей у заказа]"]
+                    detail_combo.current(0)
+            except Exception as e:
+                print(f"Ошибка обновления списка деталей: {e}")
+
+        def on_detail_select(event):
+            value = detail_var.get()
+            if value and value.startswith("ID:"):
+                try:
+                    selected_detail["id"] = int(value.split("ID:")[1].split(" - ")[0])
+                    selected_detail["name"] = value.split(" - ")[1]
+                except:
+                    selected_detail["id"] = -1
+                    selected_detail["name"] = None
+            else:
+                selected_detail["id"] = -1
+                selected_detail["name"] = None
+
+        detail_combo.bind('<<ComboboxSelected>>', on_detail_select)
+
+        # Инициализируем список деталей
+        update_details_list()
+
+        # === МАТЕРИАЛ (только для чтения) ===
+        material_frame = tk.LabelFrame(edit_window, text="Материал (не редактируется)",
+                                       bg='#e8f4f8', font=("Arial", 9, "bold"))
+        material_frame.pack(fill=tk.X, padx=20, pady=10)
+
         material_info = f"{reserve_row['Марка']} {reserve_row['Толщина']}мм {reserve_row['Ширина']}x{reserve_row['Длина']}"
-        tk.Label(info_frame, text=f"Материал: {material_info}", bg='#e8f4f8', font=("Arial", 9)).pack(padx=10, pady=2)
+        tk.Label(material_frame, text=material_info, bg='#e8f4f8', font=("Arial", 10)).pack(padx=10, pady=5)
 
-        # Редактируемое поле: Количество зарезервировано
+        # === КОЛИЧЕСТВО ===
         qty_frame = tk.Frame(edit_window, bg='#ecf0f1')
         qty_frame.pack(fill=tk.X, padx=20, pady=10)
         tk.Label(qty_frame, text="Зарезервировано (шт):", width=25, anchor='w',
@@ -1938,8 +2062,7 @@ class ProductionApp:
         qty_entry.insert(0, str(int(reserve_row["Зарезервировано штук"])))
         qty_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
 
-        # Информация о списании
-        written_off = int(reserve_row["Списано"])
+        # === СТАТИСТИКА ===
         remainder = int(reserve_row["Остаток к списанию"])
 
         stats_frame = tk.LabelFrame(edit_window, text="Статистика", bg='#fff3cd', font=("Arial", 9, "bold"))
@@ -1949,21 +2072,28 @@ class ProductionApp:
         tk.Label(stats_frame, text=f"Остаток к списанию: {remainder} шт",
                  bg='#fff3cd', font=("Arial", 9)).pack(anchor='w', padx=10, pady=2)
 
-        # Предупре��дение
+        # === ПРЕДУПРЕЖДЕНИЕ ===
         warning_frame = tk.Frame(edit_window, bg='#ffcccc', relief=tk.RIDGE, borderwidth=2)
         warning_frame.pack(fill=tk.X, padx=20, pady=10)
-        tk.Label(warning_frame, text="ВАЖНО!", font=("Arial", 9, "bold"),
+        tk.Label(warning_frame, text="⚠ ВАЖНО!", font=("Arial", 9, "bold"),
                  bg='#ffcccc', fg='#c0392b').pack(anchor='w', padx=5, pady=2)
         tk.Label(warning_frame, text="• Нельзя уменьшить количество ниже уже списанного",
                  font=("Arial", 8), bg='#ffcccc', fg='#c0392b').pack(anchor='w', padx=10)
-        tk.Label(warning_frame, text="• Изменение количества пересчитает остаток к списанию",
+        tk.Label(warning_frame, text="• Можно изменить заказ и деталь",
                  font=("Arial", 8), bg='#ffcccc', fg='#c0392b').pack(anchor='w', padx=10)
-        tk.Label(warning_frame, text="• Изменение влияет на баланс материалов на складе",
+        tk.Label(warning_frame, text="• Изменение количества влияет на баланс материалов",
                  font=("Arial", 8), bg='#ffcccc', fg='#c0392b').pack(anchor='w', padx=10)
 
         def save_changes():
             try:
                 new_qty = int(qty_entry.get().strip())
+                new_order_id = selected_order["id"]
+                new_detail_id = selected_detail["id"]
+                new_detail_name = selected_detail["name"] if selected_detail["name"] else "Не указана"
+
+                if not new_order_id:
+                    messagebox.showwarning("Предупреждение", "Выберите заказ!")
+                    return
 
                 if new_qty < written_off:
                     messagebox.showerror("Ошибка",
@@ -1975,50 +2105,88 @@ class ProductionApp:
                     return
 
                 old_qty = int(reserve_row["Зарезервировано штук"])
-                difference = new_qty - old_qty
+                qty_difference = new_qty - old_qty
 
-                if difference == 0:
+                # Проверяем изменения
+                order_changed = new_order_id != current_order_id
+                detail_changed = new_detail_id != current_detail_id
+                qty_changed = qty_difference != 0
+
+                if not order_changed and not detail_changed and not qty_changed:
                     messagebox.showinfo("Информация", "Изменений не было")
                     edit_window.destroy()
                     return
 
-                # Подтверждение
-                if not messagebox.askyesno("Подтверждение",
-                                           f"Изменить количество с {old_qty} на {new_qty} шт?\n\n"
-                                           f"Разница: {'+' if difference > 0 else ''}{difference} шт\n"
-                                           f"Новый остаток к списанию: {new_qty - written_off} шт"):
+                # Формируем сообщение с изменениями
+                changes_msg = "Будут внесены следующие изменения:\n\n"
+
+                if order_changed:
+                    old_order = orders_df[orders_df["ID заказа"] == current_order_id].iloc[0]
+                    new_order = orders_df[orders_df["ID заказа"] == new_order_id].iloc[0]
+                    changes_msg += f"📋 Заказ:\n"
+                    changes_msg += f"  Старый: {old_order['Заказчик']} | {old_order['Название заказа']}\n"
+                    changes_msg += f"  Новый: {new_order['Заказчик']} | {new_order['Название заказа']}\n\n"
+
+                if detail_changed:
+                    old_detail_name = reserve_row.get("Название детали", "Не указана")
+                    if pd.isna(old_detail_name) or old_detail_name == "":
+                        old_detail_name = "Не указана"
+                    changes_msg += f"🔧 Деталь:\n"
+                    changes_msg += f"  Старая: {old_detail_name}\n"
+                    changes_msg += f"  Новая: {new_detail_name}\n\n"
+
+                if qty_changed:
+                    changes_msg += f"📦 Количество:\n"
+                    changes_msg += f"  Старое: {old_qty} шт\n"
+                    changes_msg += f"  Новое: {new_qty} шт\n"
+                    changes_msg += f"  Разница: {'+' if qty_difference > 0 else ''}{qty_difference} шт\n"
+                    changes_msg += f"  Новый остаток к списанию: {new_qty - written_off} шт\n\n"
+
+                changes_msg += "Продолжить?"
+
+                if not messagebox.askyesno("Подтверждение изменений", changes_msg):
                     return
 
                 # Обновляем резерв
                 new_remainder = new_qty - written_off
+                reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "ID заказа"] = new_order_id
+                reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "ID детали"] = new_detail_id
+                reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Название детали"] = new_detail_name
                 reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Зарезервировано штук"] = new_qty
                 reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Остаток к списанию"] = new_remainder
                 save_data("Reservations", reservations_df)
 
-                # Обновляем материал на складе (если не вручную добавленный)
-                material_id = int(reserve_row["ID материала"])
-                if material_id != -1:
-                    materials_df = load_data("Materials")
-                    if not materials_df[materials_df["ID"] == material_id].empty:
-                        mat_row = materials_df[materials_df["ID"] == material_id].iloc[0]
-                        current_reserved = int(mat_row["Зарезервировано"])
-                        current_available = int(mat_row["Доступно"])
+                # Обновляем материал на складе (если количество изменилось и не вручную добавленный)
+                if qty_changed:
+                    material_id = int(reserve_row["ID материала"])
+                    if material_id != -1:
+                        materials_df = load_data("Materials")
+                        if not materials_df[materials_df["ID"] == material_id].empty:
+                            mat_row = materials_df[materials_df["ID"] == material_id].iloc[0]
+                            current_reserved = int(mat_row["Зарезервировано"])
+                            current_available = int(mat_row["Доступно"])
 
-                        new_reserved = current_reserved + difference
-                        new_available = current_available - difference
+                            new_reserved = current_reserved + qty_difference
+                            new_available = current_available - qty_difference
 
-                        materials_df.loc[materials_df["ID"] == material_id, "Зарезервировано"] = new_reserved
-                        materials_df.loc[materials_df["ID"] == material_id, "Доступно"] = new_available
-                        save_data("Materials", materials_df)
-                        self.refresh_materials()
+                            materials_df.loc[materials_df["ID"] == material_id, "Зарезервировано"] = new_reserved
+                            materials_df.loc[materials_df["ID"] == material_id, "Доступно"] = new_available
+                            save_data("Materials", materials_df)
+                            self.refresh_materials()
 
                 self.refresh_reservations()
                 self.refresh_balance()
                 edit_window.destroy()
-                messagebox.showinfo("Успех",
-                                    f"Резерв обновлен!\n\n"
-                                    f"Новое количество: {new_qty} шт\n"
-                                    f"Остаток к списанию: {new_remainder} шт")
+
+                result_msg = f"✅ Резерв #{reserve_id} обновлен!\n\n"
+                if order_changed:
+                    result_msg += "📋 Заказ изменен\n"
+                if detail_changed:
+                    result_msg += f"🔧 Деталь изменена на: {new_detail_name}\n"
+                if qty_changed:
+                    result_msg += f"📦 Количество: {new_qty} шт (остаток: {new_remainder} шт)\n"
+
+                messagebox.showinfo("Успех", result_msg)
 
             except ValueError:
                 messagebox.showerror("Ошибка", "Проверьте правильность ввода числовых значений!")
@@ -2027,7 +2195,7 @@ class ProductionApp:
                 import traceback
                 traceback.print_exc()
 
-        tk.Button(edit_window, text="Сохранить изменения", bg='#f39c12', fg='white',
+        tk.Button(edit_window, text="💾 Сохранить изменения", bg='#f39c12', fg='white',
                   font=("Arial", 12, "bold"), command=save_changes).pack(pady=15)
 
     def export_laser_task(self):
