@@ -2647,7 +2647,7 @@ class ProductionApp:
             traceback.print_exc()
 
     def setup_writeoffs_tab(self):
-        """Вкладка списания материалов - ТОЛЬКО ручное списание"""
+        """Вкладка списания материалов - РУЧНОЕ списание (совместима с импортом от лазерщиков)"""
         header = tk.Label(self.writeoffs_frame, text="Списание зарезервированных материалов",
                           font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
         header.pack(pady=10)
@@ -2708,1279 +2708,84 @@ class ProductionApp:
 
         self.refresh_writeoffs()
 
-        def setup_laser_import_tab(self):
-            """Вкладка для импорта таблицы от лазерщиков и списания"""
-
-            # Заголовок
-            header = tk.Label(self.laser_import_frame, text="Импорт таблицы от лазерщиков для списания",
-                              font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
-            header.pack(pady=10)
-
-            # Инструкция
-            info_frame = tk.LabelFrame(self.laser_import_frame, text="📋 Инструкция",
-                                       bg='#e8f4f8', font=("Arial", 10, "bold"))
-            info_frame.pack(fill=tk.X, padx=10, pady=5)
-
-            instruction_text = """
-        1. Импортируйте Excel таблицу от лазерщиков 
-        2. Система автоматически найдет заказы и материалы
-        3. Выберите строки для списания
-        4. Нажмите "Списать выбранное"
-        5. После списания данные обновятся автоматически
-
-        Требуемые колонки в Excel:
-        • Дата (МСК) - дата операции
-        • Время (МСК) - время операции  
-        • username - имя оператора
-        • order - название заказа (УП-XXXX)
-        • metal - описание металла (марка толщинахширинахдлина)
-        • metal_quantity - количество листов
-        • part - название детали
-        • part_quantity - количество деталей
-            """
-
-            tk.Label(info_frame, text=instruction_text, bg='#e8f4f8',
-                     font=("Arial", 9), justify=tk.LEFT).pack(padx=10, pady=5)
-
-            # Таблица
-            tree_frame = tk.Frame(self.laser_import_frame, bg='white')
-            tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-            scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
-            scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
-
-            self.laser_tree = ttk.Treeview(tree_frame,
-                                           columns=("Дата", "Время", "Оператор", "Заказ", "Металл",
-                                                    "Кол-во листов", "Деталь", "Кол-во деталей", "Статус"),
-                                           show="headings",
-                                           yscrollcommand=scroll_y.set,
-                                           xscrollcommand=scroll_x.set)
-
-            scroll_y.config(command=self.laser_tree.yview)
-            scroll_x.config(command=self.laser_tree.xview)
-            scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
-            scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
-
-            # Настройка колонок
-            columns_config = {
-                "Дата": 100, "Время": 80, "Оператор": 120, "Заказ": 200,
-                "Металл": 200, "Кол-во листов": 100, "Деталь": 200,
-                "Кол-во деталей": 100, "Статус": 100
-            }
-
-            for col, width in columns_config.items():
-                self.laser_tree.heading(col, text=col)
-                self.laser_tree.column(col, width=width, anchor=tk.CENTER)
-
-            self.laser_tree.pack(fill=tk.BOTH, expand=True)
-
-            # Цветовая индикация
-            self.laser_tree.tag_configure('written_off', background='#c8e6c9')  # Зеленый
-            self.laser_tree.tag_configure('pending', background='#fff9c4')  # Желтый
-            self.laser_tree.tag_configure('error', background='#ffcccc')  # Красный
-
-            # Кнопки
-            buttons_frame = tk.Frame(self.laser_import_frame, bg='white')
-            buttons_frame.pack(fill=tk.X, padx=10, pady=10)
-
-            btn_style = {"font": ("Arial", 10), "width": 18, "height": 2}
-
-            tk.Button(buttons_frame, text="📁 Импортировать Excel", bg='#3498db', fg='white',
-                      command=self.import_laser_excel, **btn_style).pack(side=tk.LEFT, padx=5)
-
-            tk.Button(buttons_frame, text="✅ Списать выбранное", bg='#27ae60', fg='white',
-                      command=self.writeoff_laser_selected, **btn_style).pack(side=tk.LEFT, padx=5)
-
-            tk.Button(buttons_frame, text="📝 Редактировать", bg='#f39c12', fg='white',
-                      command=self.edit_laser_row, **btn_style).pack(side=tk.LEFT, padx=5)
-
-            tk.Button(buttons_frame, text="🗑️ Удалить строку", bg='#e74c3c', fg='white',
-                      command=self.delete_laser_row, **btn_style).pack(side=tk.LEFT, padx=5)
-
-            tk.Button(buttons_frame, text="💾 Экспорт результата", bg='#9b59b6', fg='white',
-                      command=self.export_laser_result, **btn_style).pack(side=tk.LEFT, padx=5)
-
-            # Хранилище данных
-            self.laser_data = []
-
-        def import_laser_excel(self):
-            """Импорт Excel таблицы от лазерщиков"""
-            file_path = filedialog.askopenfilename(
-                title="Выберите таблицу от лазерщиков",
-                filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
-            )
-
-            if not file_path:
-                return
-
-            try:
-                df = pd.read_excel(file_path, engine='openpyxl')
-
-                # Проверка обязательных колонок
-                required_cols = ["Дата (МСК)", "Время (МСК)", "username", "order",
-                                 "metal", "metal_quantity", "part", "part_quantity"]
-
-                missing = [col for col in required_cols if col not in df.columns]
-                if missing:
-                    messagebox.showerror("Ошибка",
-                                         f"Отсутствуют обязательные колонки:\n{', '.join(missing)}")
-                    return
-
-                # Добавляем колонку статуса
-                if "Статус" not in df.columns:
-                    df["Статус"] = ""
-
-                # Сохраняем данные
-                self.laser_data = df.to_dict('records')
-
-                # Отображаем
-                self.refresh_laser_table()
-
-                messagebox.showinfo("Успех", f"Загружено {len(self.laser_data)} записей")
-
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось импортировать:\n{e}")
-
-        def refresh_laser_table(self):
-            """Обновление отображения таблицы"""
-            for i in self.laser_tree.get_children():
-                self.laser_tree.delete(i)
-
-            for row_data in self.laser_data:
-                date_val = row_data.get("Дата (МСК)", "")
-                time_val = row_data.get("Время (МСК)", "")
-                username = row_data.get("username", "")
-                order = row_data.get("order", "")
-                metal = row_data.get("metal", "")
-                metal_qty = row_data.get("metal_quantity", "")
-                part = row_data.get("part", "")
-                part_qty = row_data.get("part_quantity", "")
-                status = row_data.get("Статус", "")
-
-                values = (date_val, time_val, username, order, metal,
-                          metal_qty, part, part_qty, status)
-
-                # Определяем цвет строки
-                if status == "✅ Списано":
-                    tag = 'written_off'
-                elif status.startswith("❌"):
-                    tag = 'error'
-                else:
-                    tag = 'pending'
-
-                self.laser_tree.insert("", "end", values=values, tags=(tag,))
-
-            self.auto_resize_columns(self.laser_tree)
-
-        def writeoff_laser_selected(self):
-            """Списание выбранных строк"""
-            selected = self.laser_tree.selection()
-            if not selected:
-                messagebox.showwarning("Предупреждение", "Выберите строки для списания")
-                return
-
-            success_count = 0
-            error_count = 0
-            errors = []
-
-            for item in selected:
-                row_index = self.laser_tree.index(item)
-                row_data = self.laser_data[row_index]
-
-                # Пропускаем уже списанные
-                if row_data.get("Статус") == "✅ Списано":
-                    continue
-
-                try:
-                    # Извлекаем данные
-                    order_name = row_data.get("order", "")
-                    metal_desc = row_data.get("metal", "")
-                    metal_qty = int(float(row_data.get("metal_quantity", 0)))
-                    part_name = row_data.get("part", "")
-                    username = row_data.get("username", "")
-                    date_str = row_data.get("Дата (МСК)", "")
-                    time_str = row_data.get("Время (МСК)", "")
-
-                    # Ищем заказ
-                    orders_df = load_data("Orders")
-                    import re
-
-                    # Пытаемся найти УП-XXXX
-                    match = re.search(r'УП-(\d+)', order_name)
-                    order_id = None
-
-                    if match:
-                        up_num = match.group(1)
-                        order_match = orders_df[
-                            orders_df["Название заказа"].str.contains(f"УП-{up_num}",
-                                                                      case=False, na=False, regex=False)]
-                        if not order_match.empty:
-                            order_id = int(order_match.iloc[0]["ID заказа"])
-
-                    if not order_id:
-                        errors.append(f"Строка {row_index + 1}: Заказ не найден")
-                        row_data["Статус"] = f"❌ Заказ не найден"
-                        error_count += 1
-                        continue
-
-                    # Ищем резерв
-                    reservations_df = load_data("Reservations")
-                    order_reserves = reservations_df[reservations_df["ID заказа"] == order_id]
-
-                    if order_reserves.empty:
-                        errors.append(f"Строка {row_index + 1}: Нет резервов")
-                        row_data["Статус"] = f"❌ Нет резервов"
-                        error_count += 1
-                        continue
-
-                    # Парсим размеры металла
-                    dimensions = re.search(r'(\d+(?:\.\d+)?)[хxХX](\d+(?:\.\d+)?)[хxХX](\d+(?:\.\d+)?)', metal_desc)
-
-                    if not dimensions:
-                        errors.append(f"Строка {row_index + 1}: Не удалось определить размеры")
-                        row_data["Статус"] = f"❌ Ошибка размеров"
-                        error_count += 1
-                        continue
-
-                    thickness = float(dimensions.group(1))
-                    width = float(dimensions.group(2))
-                    length = float(dimensions.group(3))
-
-                    # Ищем подходящий резерв
-                    suitable_reserve = None
-                    for _, reserve in order_reserves.iterrows():
-                        if (abs(float(reserve["Толщина"]) - thickness) < 0.01 and
-                                abs(float(reserve["Ширина"]) - width) < 0.01 and
-                                abs(float(reserve["Длина"]) - length) < 0.01 and
-                                int(reserve["Остаток к списанию"]) > 0):
-                            suitable_reserve = reserve
-                            break
-
-                    if suitable_reserve is None:
-                        errors.append(f"Строка {row_index + 1}: Подходящий резерв не найден")
-                        row_data["Статус"] = f"�� Резерв не найден"
-                        error_count += 1
-                        continue
-
-                    # Списываем
-                    reserve_id = int(suitable_reserve["ID резерва"])
-                    remainder = int(suitable_reserve["Остаток к списанию"])
-
-                    if metal_qty > remainder:
-                        if not messagebox.askyesno("Предупреждение",
-                                                   f"Строка {row_index + 1}: Списываем {metal_qty}, осталось {remainder}. Продолжить?"):
-                            continue
-
-                    # Создаем запись списания
-                    writeoffs_df = load_data("WriteOffs")
-                    new_writeoff_id = 1 if writeoffs_df.empty else int(writeoffs_df["ID списания"].max()) + 1
-
-                    comment = f"Оператор: {username} | Деталь: {part_name}"
-                    writeoff_datetime = f"{date_str} {time_str}"
-
-                    new_writeoff = pd.DataFrame([{
-                        "ID списания": new_writeoff_id,
-                        "ID резерва": reserve_id,
-                        "ID заказа": order_id,
-                        "ID материала": int(suitable_reserve["ID материала"]),
-                        "Марка": suitable_reserve["Марка"],
-                        "Толщина": thickness,
-                        "Длина": length,
-                        "Ширина": width,
-                        "Количество": metal_qty,
-                        "Дата списания": writeoff_datetime,
-                        "Комментарий": comment
-                    }])
-
-                    writeoffs_df = pd.concat([writeoffs_df, new_writeoff], ignore_index=True)
-                    save_data("WriteOffs", writeoffs_df)
-
-                    # Обновляем резерв
-                    new_written_off = int(suitable_reserve["Списано"]) + metal_qty
-                    new_remainder = remainder - metal_qty
-
-                    reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Списано"] = new_written_off
-                    reservations_df.loc[
-                        reservations_df["ID резерва"] == reserve_id, "Остаток к списанию"] = new_remainder
-                    save_data("Reservations", reservations_df)
-
-                    # Обновляем склад
-                    material_id = int(suitable_reserve["ID материала"])
-                    if material_id != -1:
-                        materials_df = load_data("Materials")
-                        if not materials_df[materials_df["ID"] == material_id].empty:
-                            mat_row = materials_df[materials_df["ID"] == material_id].iloc[0]
-                            old_qty = int(mat_row["Количество штук"])
-                            new_qty = old_qty - metal_qty
-                            reserved = int(mat_row["Зарезервировано"])
-                            new_reserved = max(0, reserved - metal_qty)
-
-                            materials_df.loc[materials_df["ID"] == material_id, "Количество штук"] = new_qty
-                            materials_df.loc[materials_df["ID"] == material_id, "Зарезервировано"] = new_reserved
-                            materials_df.loc[materials_df["ID"] == material_id, "Доступно"] = new_qty - new_reserved
-
-                            save_data("Materials", materials_df)
-
-                    # Обновляем статус
-                    row_data["Статус"] = "✅ Списано"
-                    success_count += 1
-
-                except Exception as e:
-                    errors.append(f"Строка {row_index + 1}: {str(e)}")
-                    row_data["Статус"] = f"❌ Ошибка"
-                    error_count += 1
-
-            # Обновляем отображение
-            self.refresh_laser_table()
-            self.refresh_reservations()
-            self.refresh_materials()
-
-            result_msg = f"✅ Списано: {success_count}\n❌ Ошибок: {error_count}"
-            if errors:
-                result_msg += f"\n\nПодробности:\n" + "\n".join(errors[:10])
-
-            messagebox.showinfo("Результат списания", result_msg)
-
-        def edit_laser_row(self):
-            """Редактирование строки"""
-            selected = self.laser_tree.selection()
-            if not selected:
-                messagebox.showwarning("Предупреждение", "Выберите строку")
-                return
-
-            item = selected[0]
-            row_index = self.laser_tree.index(item)
-            row_data = self.laser_data[row_index]
-
-            # Создаем окно редактирования
-            edit_window = tk.Toplevel(self.root)
-            edit_window.title("Редактировать")
-            edit_window.geometry("500x600")
-            edit_window.configure(bg='#ecf0f1')
-
-            fields = [
-                ("Дата (МСК):", "Дата (МСК)"),
-                ("Время (МСК):", "Время (МСК)"),
-                ("Оператор:", "username"),
-                ("Заказ:", "order"),
-                ("Металл:", "metal"),
-                ("Кол-во листов:", "metal_quantity"),
-                ("Деталь:", "part"),
-                ("Кол-во деталей:", "part_quantity")
-            ]
-
-            entries = {}
-
-            for label_text, key in fields:
-                frame = tk.Frame(edit_window, bg='#ecf0f1')
-                frame.pack(fill=tk.X, padx=20, pady=5)
-                tk.Label(frame, text=label_text, width=20, anchor='w',
-                         bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
-                entry = tk.Entry(frame, font=("Arial", 10))
-                entry.insert(0, str(row_data.get(key, "")))
-                entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
-                entries[key] = entry
-
-            def save_changes():
-                for key, entry in entries.items():
-                    self.laser_data[row_index][key] = entry.get()
-                self.refresh_laser_table()
-                edit_window.destroy()
-                messagebox.showinfo("Успех", "Изменения сохранены")
-
-            tk.Button(edit_window, text="💾 Сохранить", bg='#27ae60', fg='white',
-                      font=("Arial", 12, "bold"), command=save_changes).pack(pady=20)
-
-        def delete_laser_row(self):
-            """Удаление строки"""
-            selected = self.laser_tree.selection()
-            if not selected:
-                messagebox.showwarning("Предупреждение", "Выберите строки")
-                return
-
-            if not messagebox.askyesno("Подтверждение",
-                                       f"Удалить {len(selected)} строк(и)?"):
-                return
-
-            # Удаляем в обратном порядке
-            for item in reversed(selected):
-                row_index = self.laser_tree.index(item)
-                del self.laser_data[row_index]
-
-            self.refresh_laser_table()
-            messagebox.showinfo("Успех", f"Удалено {len(selected)} строк(и)")
-
-        def export_laser_result(self):
-            """Экспорт результата"""
-            if not self.laser_data:
-                messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
-                return
-
-            file_path = filedialog.asksaveasfilename(
-                title="Сохранить результат",
-                defaultextension=".xlsx",
-                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
-                initialfile=f"laser_result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-            )
-
-            if not file_path:
-                return
-
-            try:
-                df = pd.DataFrame(self.laser_data)
-                df.to_excel(file_path, index=False, engine='openpyxl')
-                messagebox.showinfo("Успех", f"Результат сохранен:\n{file_path}")
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось сохранить:\n{e}")
-
-
-
-        def import_laser_excel(self):
-            """Импорт Excel таблицы от лазерщиков"""
-            file_path = filedialog.askopenfilename(
-                title="Выберите таблицу от лазерщиков",
-                filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
-            )
-
-            if not file_path:
-                return
-
-            try:
-                df = pd.read_excel(file_path, engine='openpyxl')
-
-                # Проверка обязательных колонок
-                required_cols = ["Дата (МСК)", "Время (МСК)", "username", "order",
-                                 "metal", "metal_quantity", "part", "part_quantity"]
-
-                missing = [col for col in required_cols if col not in df.columns]
-                if missing:
-                    messagebox.showerror("Ошибка",
-                                         f"Отсутствуют обязательные колонки:\n{', '.join(missing)}")
-                    return
-
-                # Добавляем колонку статуса
-                if "Статус" not in df.columns:
-                    df["Статус"] = ""
-
-                # Сохраняем данные
-                self.laser_data = df.to_dict('records')
-
-                # Отображаем
-                self.refresh_laser_table()
-
-                messagebox.showinfo("Успех", f"Загружено {len(self.laser_data)} записей")
-
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось импортировать:\n{e}")
-
-        def refresh_laser_table(self):
-            """Обновление отображения таблицы"""
-            for i in self.laser_tree.get_children():
-                self.laser_tree.delete(i)
-
-            for row_data in self.laser_data:
-                date_val = row_data.get("Дата (МСК)", "")
-                time_val = row_data.get("Время (МСК)", "")
-                username = row_data.get("username", "")
-                order = row_data.get("order", "")
-                metal = row_data.get("metal", "")
-                metal_qty = row_data.get("metal_quantity", "")
-                part = row_data.get("part", "")
-                part_qty = row_data.get("part_quantity", "")
-                status = row_data.get("Статус", "")
-
-                values = (date_val, time_val, username, order, metal,
-                          metal_qty, part, part_qty, status)
-
-                # Определяем цвет строки
-                if status == "✅ Списано":
-                    tag = 'written_off'
-                elif status.startswith("❌"):
-                    tag = 'error'
-                else:
-                    tag = 'pending'
-
-                self.laser_tree.insert("", "end", values=values, tags=(tag,))
-
-            self.auto_resize_columns(self.laser_tree)
-
-        def writeoff_laser_selected(self):
-            """Списание выбранных строк"""
-            selected = self.laser_tree.selection()
-            if not selected:
-                messagebox.showwarning("Предупреждение", "Выберите строки для списания")
-                return
-
-            success_count = 0
-            error_count = 0
-            errors = []
-
-            for item in selected:
-                row_index = self.laser_tree.index(item)
-                row_data = self.laser_data[row_index]
-
-                # Пропускаем уже списанные
-                if row_data.get("Статус") == "✅ Списано":
-                    continue
-
-                try:
-                    # Извлекаем данные
-                    order_name = row_data.get("order", "")
-                    metal_desc = row_data.get("metal", "")
-                    metal_qty = int(float(row_data.get("metal_quantity", 0)))
-                    part_name = row_data.get("part", "")
-                    username = row_data.get("username", "")
-                    date_str = row_data.get("Дата (МСК)", "")
-                    time_str = row_data.get("Время (МСК)", "")
-
-                    # Ищем заказ
-                    orders_df = load_data("Orders")
-                    import re
-
-                    # Пытаемся найти УП-XXXX
-                    match = re.search(r'УП-(\d+)', order_name)
-                    order_id = None
-
-                    if match:
-                        up_num = match.group(1)
-                        order_match = orders_df[
-                            orders_df["Название заказа"].str.contains(f"УП-{up_num}",
-                                                                      case=False, na=False, regex=False)]
-                        if not order_match.empty:
-                            order_id = int(order_match.iloc[0]["ID заказа"])
-
-                    if not order_id:
-                        errors.append(f"Строка {row_index + 1}: Заказ не найден")
-                        row_data["Статус"] = f"❌ Заказ не найден"
-                        error_count += 1
-                        continue
-
-                    # Ищем резерв
-                    reservations_df = load_data("Reservations")
-                    order_reserves = reservations_df[reservations_df["ID заказа"] == order_id]
-
-                    if order_reserves.empty:
-                        errors.append(f"Строка {row_index + 1}: Нет резервов")
-                        row_data["Статус"] = f"❌ Нет резервов"
-                        error_count += 1
-                        continue
-
-                    # Парсим размеры металла
-                    dimensions = re.search(r'(\d+(?:\.\d+)?)[хxХX](\d+(?:\.\d+)?)[хxХX](\d+(?:\.\d+)?)', metal_desc)
-
-                    if not dimensions:
-                        errors.append(f"Строка {row_index + 1}: Не удалось определить размеры")
-                        row_data["Статус"] = f"❌ Ошибка размеров"
-                        error_count += 1
-                        continue
-
-                    thickness = float(dimensions.group(1))
-                    width = float(dimensions.group(2))
-                    length = float(dimensions.group(3))
-
-                    # Ищем подходящий резерв
-                    suitable_reserve = None
-                    for _, reserve in order_reserves.iterrows():
-                        if (abs(float(reserve["Толщина"]) - thickness) < 0.01 and
-                                abs(float(reserve["Ширина"]) - width) < 0.01 and
-                                abs(float(reserve["Длина"]) - length) < 0.01 and
-                                int(reserve["Остаток к списанию"]) > 0):
-                            suitable_reserve = reserve
-                            break
-
-                    if suitable_reserve is None:
-                        errors.append(f"Строка {row_index + 1}: Подходящий резерв не найден")
-                        row_data["Статус"] = f"�� Резерв не найден"
-                        error_count += 1
-                        continue
-
-                    # Списываем
-                    reserve_id = int(suitable_reserve["ID резерва"])
-                    remainder = int(suitable_reserve["Остаток к списанию"])
-
-                    if metal_qty > remainder:
-                        if not messagebox.askyesno("Предупреждение",
-                                                   f"Строка {row_index + 1}: Списываем {metal_qty}, осталось {remainder}. Продолжить?"):
-                            continue
-
-                    # Создаем запись списания
-                    writeoffs_df = load_data("WriteOffs")
-                    new_writeoff_id = 1 if writeoffs_df.empty else int(writeoffs_df["ID списания"].max()) + 1
-
-                    comment = f"Оператор: {username} | Деталь: {part_name}"
-                    writeoff_datetime = f"{date_str} {time_str}"
-
-                    new_writeoff = pd.DataFrame([{
-                        "ID списания": new_writeoff_id,
-                        "ID резерва": reserve_id,
-                        "ID заказа": order_id,
-                        "ID материала": int(suitable_reserve["ID материала"]),
-                        "Марка": suitable_reserve["Марка"],
-                        "Толщина": thickness,
-                        "Длина": length,
-                        "Ширина": width,
-                        "Количество": metal_qty,
-                        "Дата списания": writeoff_datetime,
-                        "Комментарий": comment
-                    }])
-
-                    writeoffs_df = pd.concat([writeoffs_df, new_writeoff], ignore_index=True)
-                    save_data("WriteOffs", writeoffs_df)
-
-                    # Обновляем резерв
-                    new_written_off = int(suitable_reserve["Списано"]) + metal_qty
-                    new_remainder = remainder - metal_qty
-
-                    reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Списано"] = new_written_off
-                    reservations_df.loc[
-                        reservations_df["ID резерва"] == reserve_id, "Остаток к списанию"] = new_remainder
-                    save_data("Reservations", reservations_df)
-
-                    # Обновляем склад
-                    material_id = int(suitable_reserve["ID материала"])
-                    if material_id != -1:
-                        materials_df = load_data("Materials")
-                        if not materials_df[materials_df["ID"] == material_id].empty:
-                            mat_row = materials_df[materials_df["ID"] == material_id].iloc[0]
-                            old_qty = int(mat_row["Количество штук"])
-                            new_qty = old_qty - metal_qty
-                            reserved = int(mat_row["Зарезервировано"])
-                            new_reserved = max(0, reserved - metal_qty)
-
-                            materials_df.loc[materials_df["ID"] == material_id, "Количество штук"] = new_qty
-                            materials_df.loc[materials_df["ID"] == material_id, "Зарезервировано"] = new_reserved
-                            materials_df.loc[materials_df["ID"] == material_id, "Доступно"] = new_qty - new_reserved
-
-                            save_data("Materials", materials_df)
-
-                    # Обновляем статус
-                    row_data["Статус"] = "✅ Списано"
-                    success_count += 1
-
-                except Exception as e:
-                    errors.append(f"Строка {row_index + 1}: {str(e)}")
-                    row_data["Статус"] = f"❌ Ошибка"
-                    error_count += 1
-
-            # Обновляем отображение
-            self.refresh_laser_table()
-            self.refresh_reservations()
-            self.refresh_materials()
-
-            result_msg = f"✅ Списано: {success_count}\n❌ Ошибок: {error_count}"
-            if errors:
-                result_msg += f"\n\nПодробности:\n" + "\n".join(errors[:10])
-
-            messagebox.showinfo("Результат списания", result_msg)
-
-        def edit_laser_row(self):
-            """Редактирование строки"""
-            selected = self.laser_tree.selection()
-            if not selected:
-                messagebox.showwarning("Предупреждение", "Выберите строку")
-                return
-
-            item = selected[0]
-            row_index = self.laser_tree.index(item)
-            row_data = self.laser_data[row_index]
-
-            # Создаем окно редактирования
-            edit_window = tk.Toplevel(self.root)
-            edit_window.title("Редактировать")
-            edit_window.geometry("500x600")
-            edit_window.configure(bg='#ecf0f1')
-
-            fields = [
-                ("Дата (МСК):", "Дата (МСК)"),
-                ("Время (МСК):", "Время (МСК)"),
-                ("Оператор:", "username"),
-                ("Заказ:", "order"),
-                ("Металл:", "metal"),
-                ("Кол-во листов:", "metal_quantity"),
-                ("Деталь:", "part"),
-                ("Кол-во деталей:", "part_quantity")
-            ]
-
-            entries = {}
-
-            for label_text, key in fields:
-                frame = tk.Frame(edit_window, bg='#ecf0f1')
-                frame.pack(fill=tk.X, padx=20, pady=5)
-                tk.Label(frame, text=label_text, width=20, anchor='w',
-                         bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
-                entry = tk.Entry(frame, font=("Arial", 10))
-                entry.insert(0, str(row_data.get(key, "")))
-                entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
-                entries[key] = entry
-
-            def save_changes():
-                for key, entry in entries.items():
-                    self.laser_data[row_index][key] = entry.get()
-                self.refresh_laser_table()
-                edit_window.destroy()
-                messagebox.showinfo("Успех", "Изменения сохранены")
-
-            tk.Button(edit_window, text="💾 Сохранить", bg='#27ae60', fg='white',
-                      font=("Arial", 12, "bold"), command=save_changes).pack(pady=20)
-
-        def delete_laser_row(self):
-            """Удаление строки"""
-            selected = self.laser_tree.selection()
-            if not selected:
-                messagebox.showwarning("Предупреждение", "Выберите строки")
-                return
-
-            if not messagebox.askyesno("Подтверждение",
-                                       f"Удалить {len(selected)} строк(и)?"):
-                return
-
-            # Удаляем в обратном порядке
-            for item in reversed(selected):
-                row_index = self.laser_tree.index(item)
-                del self.laser_data[row_index]
-
-            self.refresh_laser_table()
-            messagebox.showinfo("Успех", f"Удалено {len(selected)} строк(и)")
-
-        def export_laser_result(self):
-            """Экспорт результата"""
-            if not self.laser_data:
-                messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
-                return
-
-            file_path = filedialog.asksaveasfilename(
-                title="Сохранить результат",
-                defaultextension=".xlsx",
-                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
-                initialfile=f"laser_result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-            )
-
-            if not file_path:
-                return
-
-            try:
-                df = pd.DataFrame(self.laser_data)
-                df.to_excel(file_path, index=False, engine='openpyxl')
-                messagebox.showinfo("Успех", f"Результат сохранен:\n{file_path}")
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось сохранить:\n{e}")
-
-        def import_laser_writeoff_table(self):
-            """Импорт таблицы списания от лазерщиков"""
-            file_path = filedialog.askopenfilename(
-                title="Выберите таблицу от лазерщиков",
-                filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
-            )
-
-            if not file_path:
-                return
-
-            try:
-                # Импорт таблицы
-                import_df = pd.read_excel(file_path, engine='openpyxl')
-
-                # Проверка обязательных колонок
-                required_cols = ["Дата", "Время", "username", "order", "metal", "metal_quantity", "part",
-                                 "part_quantity"]
-                missing = [col for col in required_cols if col not in import_df.columns]
-
-                if missing:
-                    messagebox.showerror("Ошибка", f"В файле отсутствуют колонки:\n{', '.join(missing)}")
-                    return
-
-                # Обработка каждой строки
-                reservations_df = load_data("Reservations")
-                orders_df = load_data("Orders")
-                writeoffs_df = load_data("WriteOffs")
-                materials_df = load_data("Materials")
-
-                success_count = 0
-                errors = []
-
-                for idx, row in import_df.iterrows():
-                    try:
-                        order_name = str(row.get("order", "")).strip()
-                        metal_desc = str(row.get("metal", "")).strip()
-                        metal_qty = int(float(row.get("metal_quantity", 0)))
-                        part_name = str(row.get("part", "")).strip()
-                        username = str(row.get("username", "")).strip()
-                        date_str = str(row.get("Дата", ""))
-                        time_str = str(row.get("Время", ""))
-
-                        if not order_name or metal_qty <= 0:
-                            continue
-
-                        # Поиск заказа
-                        import re
-                        match = re.search(r'УП-(\d+)', order_name)
-                        order_id = None
-
-                        if match:
-                            up_number = match.group(1)
-                            order_match = orders_df[
-                                orders_df["Название заказа"].str.contains(f"УП-{up_number}", case=False, na=False,
-                                                                          regex=False)]
-                            if not order_match.empty:
-                                order_id = int(order_match.iloc[0]["ID заказа"])
-
-                        if not order_id:
-                            errors.append(f"Строка {idx + 2}: Заказ '{order_name}' не найден")
-                            continue
-
-                        # Парсинг размеров металла
-                        metal_parts = metal_desc.split()
-                        thickness = None
-                        width = None
-                        length = None
-
-                        for part in metal_parts:
-                            match = re.search(r'(\d+(?:\.\d+)?)[хxХX](\d+(?:\.\d+)?)[хxХX](\d+(?:\.\d+)?)', part)
-                            if match:
-                                try:
-                                    thickness = float(match.group(1))
-                                    width = float(match.group(2))
-                                    length = float(match.group(3))
-                                    break
-                                except:
-                                    continue
-
-                        if not thickness:
-                            errors.append(f"Строка {idx + 2}: Не удалось определить размеры из '{metal_desc}'")
-                            continue
-
-                        # Поиск резерва
-                        order_reserves = reservations_df[reservations_df["ID заказа"] == order_id]
-
-                        if order_reserves.empty:
-                            errors.append(f"Строка {idx + 2}: Нет резервов для заказа")
-                            continue
-
-                        suitable_reserve = None
-                        tolerance = 0.01
-
-                        for _, reserve in order_reserves.iterrows():
-                            thickness_match = abs(float(reserve["Толщина"]) - thickness) < tolerance
-
-                            if width and length:
-                                width_match = abs(float(reserve["Ширина"]) - width) < tolerance
-                                length_match = abs(float(reserve["Длина"]) - length) < tolerance
-
-                                if thickness_match and width_match and length_match and int(
-                                        reserve["Остаток к списанию"]) > 0:
-                                    suitable_reserve = reserve
-                                    break
-                            else:
-                                if thickness_match and int(reserve["Остаток к списанию"]) > 0:
-                                    suitable_reserve = reserve
-                                    break
-
-                        if suitable_reserve is None:
-                            errors.append(f"Строка {idx + 2}: Не найден подходящий резерв")
-                            continue
-
-                        reserve_id = int(suitable_reserve["ID резерва"])
-                        remainder = int(suitable_reserve["Остаток к списанию"])
-
-                        if metal_qty > remainder:
-                            errors.append(f"Строка {idx + 2}: Списание ({metal_qty}) больше остатка ({remainder})")
-                            continue
-
-                        # СПИСАНИЕ
-                        new_writeoff_id = 1 if writeoffs_df.empty else int(writeoffs_df["ID списания"].max()) + 1
-
-                        comment = f"Оператор: {username} | Деталь: {part_name}"
-                        writeoff_datetime = f"{date_str} {time_str}"
-
-                        new_writeoff = pd.DataFrame([{
-                            "ID списания": new_writeoff_id,
-                            "ID резерва": reserve_id,
-                            "ID заказа": order_id,
-                            "ID материала": int(suitable_reserve["ID материала"]),
-                            "Марка": suitable_reserve["Марка"],
-                            "Толщина": thickness,
-                            "Длина": length,
-                            "Ширина": width,
-                            "Количество": metal_qty,
-                            "Дата списания": writeoff_datetime,
-                            "Комментарий": comment
-                        }])
-
-                        writeoffs_df = pd.concat([writeoffs_df, new_writeoff], ignore_index=True)
-
-                        # Обновление резерва
-                        new_written_off = int(suitable_reserve["Списано"]) + metal_qty
-                        new_remainder = remainder - metal_qty
-
-                        reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Списано"] = new_written_off
-                        reservations_df.loc[
-                            reservations_df["ID резерва"] == reserve_id, "Остаток к списанию"] = new_remainder
-
-                        # Обновление склада
-                        material_id = int(suitable_reserve["ID материала"])
-                        if material_id != -1:
-                            if not materials_df[materials_df["ID"] == material_id].empty:
-                                mat_row = materials_df[materials_df["ID"] == material_id].iloc[0]
-                                old_qty = int(mat_row["Количество штук"])
-                                new_qty = old_qty - metal_qty
-
-                                materials_df.loc[materials_df["ID"] == material_id, "Количество штук"] = new_qty
-
-                                reserved = int(mat_row["Зарезервировано"])
-                                new_reserved = max(0, reserved - metal_qty)
-                                materials_df.loc[materials_df["ID"] == material_id, "Зарезервировано"] = new_reserved
-
-                                materials_df.loc[materials_df["ID"] == material_id, "Доступно"] = new_qty - new_reserved
-
-                        success_count += 1
-
-                    except Exception as e:
-                        errors.append(f"Строка {idx + 2}: {str(e)}")
-
-                # Сохранение
-                save_data("WriteOffs", writeoffs_df)
-                save_data("Reservations", reservations_df)
-                save_data("Materials", materials_df)
-
-                self.refresh_writeoffs()
-                self.refresh_reservations()
-                self.refresh_materials()
-                self.refresh_balance()
-
-                # Результат
-                result_msg = f"✅ Успешно списано: {success_count} записей"
-                if errors:
-                    result_msg += f"\n\n⚠ Ошибки ({len(errors)}):\n" + "\n".join(errors[:10])
-                    if len(errors) > 10:
-                        result_msg += f"\n... и ещё {len(errors) - 10} ошибок"
-
-                messagebox.showinfo("Результат импорта", result_msg)
-
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось импортировать таблицу:\n{e}")
-                import traceback
-                traceback.print_exc()
-
-        def refresh_writeoffs(self):
-            """Обновление отображения таблицы списаний"""
-            for i in self.writeoffs_tree.get_children():
-                self.writeoffs_tree.delete(i)
-
-            if not hasattr(self, 'laser_table_data'):
-                return
-
-            for row_data in self.laser_table_data:
-                date_val = row_data.get("Дата (МСК)", "")
-                time_val = row_data.get("Время (МСК)", "")
-                username = row_data.get("username", "")
-                order = row_data.get("order", "")
-                metal = row_data.get("metal", "")
-                metal_qty = row_data.get("metal_quantity", "")
-                part = row_data.get("part", "")
-                part_qty = row_data.get("part_quantity", "")
-                written_off = row_data.get("Списано", "")
-                writeoff_date = row_data.get("Дата списания", "")
-
-                values = (date_val, time_val, username, order, metal, metal_qty, part, part_qty, written_off,
-                          writeoff_date)
-
-                # Цветовая индикация
-                tag = 'written_off' if written_off else 'pending'
-                self.writeoffs_tree.insert("", "end", values=values, tags=(tag,))
-
-            self.auto_resize_columns(self.writeoffs_tree)
-
-        def writeoff_selected_row(self):
-            """Списание материала по выбранной строке"""
-            selected = self.writeoffs_tree.selection()
-            if not selected:
-                messagebox.showwarning("Предупреждение", "Выберите строку для списания")
-                return
-
-            item = selected[0]
-            row_index = self.writeoffs_tree.index(item)
-            row_data = self.laser_table_data[row_index]
-
-            # Проверка: уже списано?
-            if row_data.get("Списано"):
-                messagebox.showwarning("Внимание", "Эта строка уже списана!")
-                return
-
-            try:
-                # Извлекаем данные
-                order_name = row_data.get("order", "")
-                metal_description = row_data.get("metal", "")
-
-                try:
-                    metal_qty_raw = row_data.get("metal_quantity", 0)
-                    metal_qty = int(float(metal_qty_raw)) if metal_qty_raw else 0
-                except (ValueError, TypeError):
-                    messagebox.showerror("Ошибка", f"Некорректное количество металла: {metal_qty_raw}")
-                    return
-
-                part_name = row_data.get("part", "")
-                username = row_data.get("username", "")
-                date_str = row_data.get("Дата (МСК)", "")
-                time_str = row_data.get("Время (МСК)", "")
-
-                # === ШАГ 1: Поиск заявки ===
-                orders_df = load_data("Orders")
-
-                # Ищем по номеру У��-XXX
-                import re
-                match = re.search(r'УП-(\d+)', order_name)
-                order_id = None
-
-                if match:
-                    up_number = match.group(1)
-                    order_match = orders_df[
-                        orders_df["Название заказа"].str.contains(f"УП-{up_number}", case=False, na=False, regex=False)]
-                    if not order_match.empty:
-                        order_id = int(order_match.iloc[0]["ID заказа"])
-
-                # Если не нашли, ищем по частичному совпадению
-                if not order_id:
-                    search_fragment = order_name[:20] if len(order_name) > 20 else order_name
-                    order_match = orders_df[
-                        orders_df["Название заказа"].str.contains(search_fragment, case=False, na=False, regex=False)]
-                    if not order_match.empty:
-                        order_id = int(order_match.iloc[0]["ID заказа"])
-
-                if not order_id:
-                    messagebox.showerror("Ошибка", f"Заказ '{order_name}' не найден в системе!")
-                    return
-
-                # === ШАГ 2: Поиск резерва материала ===
-                reservations_df = load_data("Reservations")
-                order_reserves = reservations_df[reservations_df["ID заказа"] == order_id]
-
-                if order_reserves.empty:
-                    messagebox.showerror("Ошибка", f"Нет резервов для заказа ID:{order_id}")
-                    return
-
-                # Парсим размеры металла
-                metal_parts = metal_description.split()
-                thickness = None
-                width = None
-                length = None
-
-                for part in metal_parts:
-                    match = re.search(r'(\d+(?:\.\d+)?)[хxХX](\d+(?:\.\d+)?)[хxХX](\d+(?:\.\d+)?)', part)
-                    if match:
-                        try:
-                            thickness = float(match.group(1))
-                            width = float(match.group(2))
-                            length = float(match.group(3))
-                            break
-                        except:
-                            pass
-
-                if not thickness:
-                    match = re.search(r'(\d+(?:\.\d+)?)\s*мм', metal_description)
-                    if match:
-                        thickness = float(match.group(1))
-
-                if not thickness:
-                    messagebox.showerror("Ошибка", f"Не удалось определить размеры из '{metal_description}'")
-                    return
-
-                # Ищем подходящий резерв
-                suitable_reserve = None
-                tolerance = 0.01
-
-                for _, reserve in order_reserves.iterrows():
-                    thickness_match = abs(float(reserve["Толщина"]) - thickness) < tolerance
-
-                    if width is None or length is None:
-                        if thickness_match and int(reserve["Остаток к списанию"]) > 0:
-                            suitable_reserve = reserve
-                            break
-                    else:
-                        width_match = abs(float(reserve["Ширина"]) - width) < tolerance
-                        length_match = abs(float(reserve["Длина"]) - length) < tolerance
-
-                        if (thickness_match and width_match and length_match and
-                                int(reserve["Остаток к списанию"]) > 0):
-                            suitable_reserve = reserve
-                            break
-
-                if suitable_reserve is None:
-                    messagebox.showerror("Ошибка",
-                                         f"Не найден резерв для:\n"
-                                         f"Заказ: {order_name}\n"
-                                         f"Материал: {thickness}мм {width}x{length}")
-                    return
-
-                reserve_id = int(suitable_reserve["ID резерва"])
-                remainder = int(suitable_reserve["Остаток к списанию"])
-
-                # Проверка остатка
-                if metal_qty > remainder:
-                    if not messagebox.askyesno("Предупреждение",
-                                               f"Списываемое количество ({metal_qty} шт) больше остатка ({remainder} шт)!\n\n"
-                                               f"Продолжить?"):
-                        return
-
-                # === ШАГ 3: Списание ===
-                writeoffs_df = load_data("WriteOffs")
-                new_writeoff_id = 1 if writeoffs_df.empty else int(writeoffs_df["ID списания"].max()) + 1
-
-                comment = f"Оператор: {username} | Деталь: {part_name}"
-                writeoff_datetime = f"{date_str} {time_str}"
-
-                new_writeoff = pd.DataFrame([{
-                    "ID списания": new_writeoff_id,
-                    "ID резерва": reserve_id,
-                    "ID заказа": order_id,
-                    "ID материала": int(suitable_reserve["ID материала"]),
-                    "Марка": suitable_reserve["Марка"],
-                    "Толщина": thickness,
-                    "Длина": length,
-                    "Ширина": width,
-                    "Количество": metal_qty,
-                    "Дата списания": writeoff_datetime,
-                    "Комментарий": comment
-                }])
-
-                writeoffs_df = pd.concat([writeoffs_df, new_writeoff], ignore_index=True)
-                save_data("WriteOffs", writeoffs_df)
-
-                # Обновляем резерв
-                new_written_off = int(suitable_reserve["Списано"]) + metal_qty
-                new_remainder = remainder - metal_qty
-
-                reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Списано"] = new_written_off
-                reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Остаток к списанию"] = new_remainder
-                save_data("Reservations", reservations_df)
-
-                # Обновляем склад
-                material_id = int(suitable_reserve["ID материала"])
-                if material_id != -1:
-                    materials_df = load_data("Materials")
-                    if not materials_df[materials_df["ID"] == material_id].empty:
-                        mat_row = materials_df[materials_df["ID"] == material_id].iloc[0]
-                        old_qty = int(mat_row["Количество штук"])
-                        new_qty = old_qty - metal_qty
-
-                        materials_df.loc[materials_df["ID"] == material_id, "Количество штук"] = new_qty
-
-                        reserved = int(mat_row["Зарезервировано"])
-                        new_reserved = max(0, reserved - metal_qty)
-                        materials_df.loc[materials_df["ID"] == material_id, "Зарезервировано"] = new_reserved
-                        materials_df.loc[materials_df["ID"] == material_id, "Доступно"] = new_qty - new_reserved
-
-                        save_data("Materials", materials_df)
-
-                # Обновляем таблицу лазерщи��ов
-                self.laser_table_data[row_index]["Списано"] = "✅"
-                self.laser_table_data[row_index]["Дата списания"] = writeoff_datetime
-
-                self.refresh_writeoffs()
-                self.refresh_reservations()
-                self.refresh_materials()
-
-                messagebox.showinfo("Успех",
-                                    f"✅ Списание выполнено!\n\n"
-                                    f"Резерв ID: {reserve_id}\n"
-                                    f"Списано: {metal_qty} листов\n"
-                                    f"Осталось: {new_remainder} листов")
-
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Ошибка списания:\n{e}")
-                import traceback
-                traceback.print_exc()
-
-        def edit_writeoff_row(self):
-            """Редактирование строки перед списанием"""
-            selected = self.writeoffs_tree.selection()
-            if not selected:
-                messagebox.showwarning("Предупреждение", "Выберите строку для редактирования")
-                return
-
-            item = selected[0]
-            row_index = self.writeoffs_tree.index(item)
-            row_data = self.laser_table_data[row_index]
-
-            edit_window = tk.Toplevel(self.root)
-            edit_window.title("Редактировать запись")
-            edit_window.geometry("500x600")
-            edit_window.configure(bg='#ecf0f1')
-
-            tk.Label(edit_window, text="Редактирование записи списания",
-                     font=("Arial", 12, "bold"), bg='#ecf0f1').pack(pady=10)
-
-            fields = [
-                ("Дата (МСК):", "Дата (МСК)"),
-                ("Время (МСК):", "Время (МСК)"),
-                ("username:", "username"),
-                ("order:", "order"),
-                ("metal:", "metal"),
-                ("metal_quantity:", "metal_quantity"),
-                ("part:", "part"),
-                ("part_quantity:", "part_quantity")
-            ]
-
-            entries = {}
-
-            for label_text, key in fields:
-                frame = tk.Frame(edit_window, bg='#ecf0f1')
-                frame.pack(fill=tk.X, padx=20, pady=5)
-                tk.Label(frame, text=label_text, width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
-                    side=tk.LEFT)
-                entry = tk.Entry(frame, font=("Arial", 10))
-                entry.insert(0, str(row_data.get(key, "")))
-                entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
-                entries[key] = entry
-
-            def save_changes():
-                for key, entry in entries.items():
-                    self.laser_table_data[row_index][key] = entry.get()
-
-                self.refresh_writeoffs()
-                edit_window.destroy()
-                messagebox.showinfo("Успех", "Запись обновлена")
-
-            tk.Button(edit_window, text="💾 Сохранить", bg='#27ae60', fg='white',
-                      font=("Arial", 12, "bold"), command=save_changes).pack(pady=20)
-
-        def delete_writeoff_row(self):
-            """Удаление строки из таблицы"""
-            selected = self.writeoffs_tree.selection()
-            if not selected:
-                messagebox.showwarning("Предупреждение", "Выберите строку для удаления")
-                return
-
-            if not messagebox.askyesno("Подтверждение", "Удалить выбранную строку?"):
-                return
-
-            item = selected[0]
-            row_index = self.writeoffs_tree.index(item)
-
-            del self.laser_table_data[row_index]
-            self.refresh_writeoffs()
-            messagebox.showinfo("Успех", "Строка удалена")
-
-        def export_laser_table(self):
-            """Экспорт таблицы с результатами списаний"""
-            if not hasattr(self, 'laser_table_data') or not self.laser_table_data:
-                messagebox.showwarning("Предупреждение", "Таблица пуста")
-                return
-
-            file_path = filedialog.asksaveasfilename(
-                title="Сохранить таблицу",
-                defaultextension=".xlsx",
-                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
-                initialfile=f"laser_writeoffs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-            )
-
-            if not file_path:
-                return
-
-            try:
-                df = pd.DataFrame(self.laser_table_data)
-                df.to_excel(file_path, index=False, engine='openpyxl')
-                messagebox.showinfo("Успех", f"Таблица сохранена:\n{file_path}")
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось сохранить таблицу:\n{e}")
+    def setup_laser_import_tab(self):
+        """Вкладка импорта таблицы от лазерщиков"""
+        header = tk.Label(self.laser_import_frame, text="Импорт и списание из таблицы лазерщиков",
+                          font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
+        header.pack(pady=10)
+
+        # Инструкция
+        info_frame = tk.LabelFrame(self.laser_import_frame, text="📋 Инструкция", bg='#e8f4f8',
+                                   font=("Arial", 10, "bold"))
+        info_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        instruction_text = """
+    1. Импортируйте таблицу от лазерщиков (Excel с колонками: Дата (МСК), Время (МСК), username, order, metal, metal_quantity, part, part_quantity)
+    2. Выберите строку для списания
+    3. Нажмите "Списать" — система найдет заявку и материал автоматически
+    4. После списания в таблице появятся колонки "Списано" и "Дата списания"
+    5. Списанные записи также отобразятся во вкладке "Списание материалов"
+        """
+        tk.Label(info_frame, text=instruction_text, bg='#e8f4f8', font=("Arial", 9), justify=tk.LEFT).pack(padx=10,
+                                                                                                           pady=5)
+
+        # Таблица
+        tree_frame = tk.Frame(self.laser_import_frame, bg='white')
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
+        scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
+
+        self.laser_import_tree = ttk.Treeview(tree_frame,
+                                              columns=("Дата", "Время", "username", "order", "metal", "metal_qty",
+                                                       "part", "part_qty", "Списано", "Дата списания"),
+                                              show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+
+        scroll_y.config(command=self.laser_import_tree.yview)
+        scroll_x.config(command=self.laser_import_tree.xview)
+        scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
+        scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # Настройка колонок
+        columns_config = {
+            "Дата": 100, "Время": 80, "username": 120, "order": 200,
+            "metal": 200, "metal_qty": 80, "part": 200, "part_qty": 80,
+            "Списано": 80, "Дата списания": 150
+        }
+
+        for col, width in columns_config.items():
+            self.laser_import_tree.heading(col, text=col)
+            self.laser_import_tree.column(col, width=width, anchor=tk.CENTER)
+
+        self.laser_import_tree.pack(fill=tk.BOTH, expand=True)
+
+        # Цветовая индикация
+        self.laser_import_tree.tag_configure('written_off', background='#c8e6c9')  # Зеленый - списано
+        self.laser_import_tree.tag_configure('pending', background='#fff9c4')  # Желтый - ожидает списания
+
+        # Кнопки
+        buttons_frame = tk.Frame(self.laser_import_frame, bg='white')
+        buttons_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        btn_style = {"font": ("Arial", 10), "width": 18, "height": 2}
+
+        tk.Button(buttons_frame, text="📁 Импорт таблицы", bg='#3498db', fg='white',
+                  command=self.import_laser_table, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(buttons_frame, text="✅ Списать выбранную", bg='#27ae60', fg='white',
+                  command=self.writeoff_laser_row, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(buttons_frame, text="📝 Редактировать", bg='#f39c12', fg='white',
+                  command=self.edit_laser_row, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(buttons_frame, text="🗑️ Удалить строку", bg='#e74c3c', fg='white',
+                  command=self.delete_laser_row, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(buttons_frame, text="💾 Сохранить таблицу", bg='#9b59b6', fg='white',
+                  command=self.export_laser_table, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        # Хранилище данных таблицы
+        self.laser_table_data = []
 
     def refresh_writeoffs(self):
         for i in self.writeoffs_tree.get_children():
@@ -4915,6 +3720,361 @@ class ProductionApp:
 
         messagebox.showinfo("Успех", "Таблица очищена")
 
+    def import_laser_table(self):
+        """Импорт таблицы от лазерщиков"""
+        file_path = filedialog.askopenfilename(
+            title="Выберите таблицу от лазерщиков",
+            filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
+        )
+
+        if not file_path:
+            return
+
+        try:
+            import_df = pd.read_excel(file_path, engine='openpyxl')
+
+            # Проверка обязательных колонок
+            required_columns = ["Дата (МСК)", "Время (МСК)", "username", "order", "metal",
+                                "metal_quantity", "part", "part_quantity"]
+            missing_columns = [col for col in required_columns if col not in import_df.columns]
+
+            if missing_columns:
+                messagebox.showerror("Ошибка", f"В файле отсутствуют колонки:\n{', '.join(missing_columns)}")
+                return
+
+            # Добавляем колонки для статуса списания
+            if "Списано" not in import_df.columns:
+                import_df["Списано"] = ""
+            if "Дата списания" not in import_df.columns:
+                import_df["Дата списания"] = ""
+
+            # Сохраняем данные
+            self.laser_table_data = import_df.to_dict('records')
+
+            # Обновляем отображение
+            self.refresh_laser_import_table()
+
+            messagebox.showinfo("Успех", f"Импортировано {len(self.laser_table_data)} строк")
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось импортировать таблицу:\n{e}")
+
+    def refresh_laser_import_table(self):
+        """Обновление отображения таблицы импорта"""
+        for i in self.laser_import_tree.get_children():
+            self.laser_import_tree.delete(i)
+
+        if not hasattr(self, 'laser_table_data'):
+            return
+
+        for row_data in self.laser_table_data:
+            date_val = row_data.get("Дата (МСК)", "")
+            time_val = row_data.get("Время (МСК)", "")
+            username = row_data.get("username", "")
+            order = row_data.get("order", "")
+            metal = row_data.get("metal", "")
+            metal_qty = row_data.get("metal_quantity", "")
+            part = row_data.get("part", "")
+            part_qty = row_data.get("part_quantity", "")
+            written_off = row_data.get("Списано", "")
+            writeoff_date = row_data.get("Дата списания", "")
+
+            values = (date_val, time_val, username, order, metal, metal_qty, part, part_qty, written_off, writeoff_date)
+
+            # Цветовая индикация
+            tag = 'written_off' if written_off else 'pending'
+            self.laser_import_tree.insert("", "end", values=values, tags=(tag,))
+
+        self.auto_resize_columns(self.laser_import_tree)
+
+    def writeoff_laser_row(self):
+        """Списание материала по выбранной строке (с добавлением в WriteOffs)"""
+        selected = self.laser_import_tree.selection()
+        if not selected:
+            messagebox.showwarning("Предупреждение", "Выберите строку для списания")
+            return
+
+        item = selected[0]
+        row_index = self.laser_import_tree.index(item)
+        row_data = self.laser_table_data[row_index]
+
+        # Проверка: уже списано?
+        if row_data.get("Списано"):
+            messagebox.showwarning("Внимание", "Эта строка уже списана!")
+            return
+
+        try:
+            # Извлекаем данные
+            order_name = row_data.get("order", "")
+            metal_description = row_data.get("metal", "")
+
+            try:
+                metal_qty_raw = row_data.get("metal_quantity", 0)
+                metal_qty = int(float(metal_qty_raw)) if metal_qty_raw else 0
+            except (ValueError, TypeError):
+                messagebox.showerror("Ошибка", f"Некорректное количество металла: {metal_qty_raw}")
+                return
+
+            part_name = row_data.get("part", "")
+            username = row_data.get("username", "")
+            date_str = row_data.get("Дата (МСК)", "")
+            time_str = row_data.get("Время (МСК)", "")
+
+            # Поиск заявки
+            orders_df = load_data("Orders")
+
+            import re
+            match = re.search(r'УП-(\d+)', order_name)
+            order_id = None
+
+            if match:
+                up_number = match.group(1)
+                order_match = orders_df[
+                    orders_df["Название заказа"].str.contains(f"УП-{up_number}", case=False, na=False, regex=False)]
+                if not order_match.empty:
+                    order_id = int(order_match.iloc[0]["ID заказа"])
+
+            if not order_id:
+                search_fragment = order_name[:20] if len(order_name) > 20 else order_name
+                order_match = orders_df[
+                    orders_df["Название заказа"].str.contains(search_fragment, case=False, na=False, regex=False)]
+                if not order_match.empty:
+                    order_id = int(order_match.iloc[0]["ID заказа"])
+
+            if not order_id:
+                messagebox.showerror("Ошибка", f"Заказ '{order_name}' не найден в системе!")
+                return
+
+            # Поиск резерва материала
+            reservations_df = load_data("Reservations")
+            order_reserves = reservations_df[reservations_df["ID заказа"] == order_id]
+
+            if order_reserves.empty:
+                messagebox.showerror("Ошибка", f"Нет резервов для заказа ID:{order_id}")
+                return
+
+            # Парсинг размеров
+            metal_parts = metal_description.split()
+            thickness = None
+            width = None
+            length = None
+
+            for part in metal_parts:
+                match = re.search(r'(\d+(?:\.\d+)?)[хxХX](\d+(?:\.\d+)?)[хxХX](\d+(?:\.\d+)?)', part)
+                if match:
+                    try:
+                        thickness = float(match.group(1))
+                        width = float(match.group(2))
+                        length = float(match.group(3))
+                        break
+                    except:
+                        pass
+
+            if not thickness:
+                match = re.search(r'(\d+(?:\.\d+)?)\s*мм', metal_description)
+                if match:
+                    thickness = float(match.group(1))
+
+            if not thickness:
+                messagebox.showerror("Ошибка", f"Не удалось определить размеры из '{metal_description}'")
+                return
+
+            # Поиск подходящего резерва
+            suitable_reserve = None
+            tolerance = 0.01
+
+            for _, reserve in order_reserves.iterrows():
+                thickness_match = abs(float(reserve["Толщина"]) - thickness) < tolerance
+
+                if width is None or length is None:
+                    if thickness_match and int(reserve["Остаток к списанию"]) > 0:
+                        suitable_reserve = reserve
+                        break
+                else:
+                    width_match = abs(float(reserve["Ширина"]) - width) < tolerance
+                    length_match = abs(float(reserve["Длина"]) - length) < tolerance
+
+                    if (thickness_match and width_match and length_match and int(reserve["Остаток к списанию"]) > 0):
+                        suitable_reserve = reserve
+                        break
+
+            if suitable_reserve is None:
+                messagebox.showerror("Ошибка",
+                                     f"Не найден резерв для:\nЗаказ: {order_name}\nМатериал: {thickness}мм {width}x{length}")
+                return
+
+            reserve_id = int(suitable_reserve["ID резерва"])
+            remainder = int(suitable_reserve["Остаток к списанию"])
+
+            if metal_qty > remainder:
+                if not messagebox.askyesno("Предупреждение",
+                                           f"Списываемое количество ({metal_qty} шт) больше остатка ({remainder} шт)!\n\nПродолжить?"):
+                    return
+
+            # === СПИСАНИЕ (с добавлением в WriteOffs) ===
+            writeoffs_df = load_data("WriteOffs")
+            new_writeoff_id = 1 if writeoffs_df.empty else int(writeoffs_df["ID списания"].max()) + 1
+
+            comment = f"Импорт от лазерщиков | Оператор: {username} | Деталь: {part_name}"
+            writeoff_datetime = f"{date_str} {time_str}"
+
+            new_writeoff = pd.DataFrame([{
+                "ID списания": new_writeoff_id,
+                "ID резерва": reserve_id,
+                "ID заказа": order_id,
+                "ID материала": int(suitable_reserve["ID материала"]),
+                "Марка": suitable_reserve["Марка"],
+                "Толщина": thickness,
+                "Длина": length if length else suitable_reserve["Длина"],
+                "Ширина": width if width else suitable_reserve["Ширина"],
+                "Количество": metal_qty,
+                "Дата списания": writeoff_datetime,
+                "Комментарий": comment
+            }])
+
+            writeoffs_df = pd.concat([writeoffs_df, new_writeoff], ignore_index=True)
+            save_data("WriteOffs", writeoffs_df)
+
+            # Обновляем резерв
+            new_written_off = int(suitable_reserve["Списано"]) + metal_qty
+            new_remainder = remainder - metal_qty
+
+            reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Списано"] = new_written_off
+            reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Остаток к списанию"] = new_remainder
+            save_data("Reservations", reservations_df)
+
+            # Обновляем склад
+            material_id = int(suitable_reserve["ID материала"])
+            if material_id != -1:
+                materials_df = load_data("Materials")
+                if not materials_df[materials_df["ID"] == material_id].empty:
+                    mat_row = materials_df[materials_df["ID"] == material_id].iloc[0]
+                    old_qty = int(mat_row["Количество штук"])
+                    new_qty = old_qty - metal_qty
+
+                    materials_df.loc[materials_df["ID"] == material_id, "Количество штук"] = new_qty
+
+                    reserved = int(mat_row["Зарезервировано"])
+                    new_reserved = max(0, reserved - metal_qty)
+                    materials_df.loc[materials_df["ID"] == material_id, "Зарезервировано"] = new_reserved
+                    materials_df.loc[materials_df["ID"] == material_id, "Доступно"] = new_qty - new_reserved
+
+                    save_data("Materials", materials_df)
+
+            # Обновляем таблицу лазерщиков
+            self.laser_table_data[row_index]["Списано"] = "✅"
+            self.laser_table_data[row_index]["Дата списания"] = writeoff_datetime
+
+            self.refresh_laser_import_table()
+            self.refresh_reservations()
+            self.refresh_materials()
+            self.refresh_writeoffs()  # ← КЛЮЧЕВОЕ ОБНОВЛЕНИЕ!
+            self.refresh_balance()
+
+            messagebox.showinfo("Успех",
+                                f"✅ Списание выполнено!\n\n"
+                                f"Резерв ID: {reserve_id}\n"
+                                f"Списано: {metal_qty} листов\n"
+                                f"Осталось: {new_remainder} листов\n\n"
+                                f"Запись добавлена во вкладку 'Списание материалов'")
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка списания:\n{e}")
+            import traceback
+            traceback.print_exc()
+
+    def edit_laser_row(self):
+        """Редактирование строки перед списанием"""
+        selected = self.laser_import_tree.selection()
+        if not selected:
+            messagebox.showwarning("Предупреждение", "Выберите строку для редактирования")
+            return
+
+        item = selected[0]
+        row_index = self.laser_import_tree.index(item)
+        row_data = self.laser_table_data[row_index]
+
+        edit_window = tk.Toplevel(self.root)
+        edit_window.title("Редактировать запись")
+        edit_window.geometry("500x600")
+        edit_window.configure(bg='#ecf0f1')
+
+        tk.Label(edit_window, text="Редактирование записи списания",
+                 font=("Arial", 12, "bold"), bg='#ecf0f1').pack(pady=10)
+
+        fields = [
+            ("Дата (МСК):", "Дата (МСК)"),
+            ("Время (МСК):", "Время (МСК)"),
+            ("username:", "username"),
+            ("order:", "order"),
+            ("metal:", "metal"),
+            ("metal_quantity:", "metal_quantity"),
+            ("part:", "part"),
+            ("part_quantity:", "part_quantity")
+        ]
+
+        entries = {}
+
+        for label_text, key in fields:
+            frame = tk.Frame(edit_window, bg='#ecf0f1')
+            frame.pack(fill=tk.X, padx=20, pady=5)
+            tk.Label(frame, text=label_text, width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
+            entry = tk.Entry(frame, font=("Arial", 10))
+            entry.insert(0, str(row_data.get(key, "")))
+            entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+            entries[key] = entry
+
+        def save_changes():
+            for key, entry in entries.items():
+                self.laser_table_data[row_index][key] = entry.get()
+
+            self.refresh_laser_import_table()
+            edit_window.destroy()
+            messagebox.showinfo("Успех", "Запись обновлена")
+
+        tk.Button(edit_window, text="💾 Сохранить", bg='#27ae60', fg='white',
+                  font=("Arial", 12, "bold"), command=save_changes).pack(pady=20)
+
+    def delete_laser_row(self):
+        """Удаление строки из таблицы"""
+        selected = self.laser_import_tree.selection()
+        if not selected:
+            messagebox.showwarning("Предупреждение", "Выберите строку для удаления")
+            return
+
+        if not messagebox.askyesno("Подтверждение", "Удалить выбранную строку?"):
+            return
+
+        item = selected[0]
+        row_index = self.laser_import_tree.index(item)
+
+        del self.laser_table_data[row_index]
+        self.refresh_laser_import_table()
+        messagebox.showinfo("Успех", "Строка удалена")
+
+    def export_laser_table(self):
+        """Экспорт таблицы с результатами списаний"""
+        if not hasattr(self, 'laser_table_data') or not self.laser_table_data:
+            messagebox.showwarning("Предупреждение", "Таблица пуста")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="Сохранить таблицу",
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            initialfile=f"laser_writeoffs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        )
+
+        if not file_path:
+            return
+
+        try:
+            df = pd.DataFrame(self.laser_table_data)
+            df.to_excel(file_path, index=False, engine='openpyxl')
+            messagebox.showinfo("Успех", f"Таблица сохранена:\n{file_path}")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить таблицу:\n{e}")
+
     def setup_balance_tab(self):
         header = tk.Label(self.balance_frame, text="Баланс материалов", font=("Arial", 16, "bold"), bg='white',
                           fg='#2c3e50')
@@ -5024,41 +4184,6 @@ class ProductionApp:
             self.balance_tree.insert("", "end", values=values, tags=(tag,))
 
         self.auto_resize_columns(self.balance_tree)
-
-
-def import_laser_table(self):
-    """Импорт таблицы от лазерщиков"""
-    file_path = filedialog.askopenfilename(
-        title="Выберите таблицу от лазерщиков",
-        filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
-    )
-
-    if not file_path:
-        return
-
-    try:
-        import_df = pd.read_excel(file_path, engine='openpyxl')
-
-        required_columns = ["Дата (МСК)", "Время (МСК)", "username", "order", "metal", "metal_quantity", "part",
-                            "part_quantity"]
-        missing_columns = [col for col in required_columns if col not in import_df.columns]
-
-        if missing_columns:
-            messagebox.showerror("Ошибка", f"В файле отсутствуют колонки:\n{', '.join(missing_columns)}")
-            return
-
-        if "Списано" not in import_df.columns:
-            import_df["Списано"] = ""
-        if "Дата списания" not in import_df.columns:
-            import_df["Дата списания"] = ""
-
-        self.laser_table_data = import_df.to_dict('records')
-        self.refresh_laser_import_table()
-
-        messagebox.showinfo("Успех", f"Импортировано {len(self.laser_table_data)} строк")
-
-    except Exception as e:
-        messagebox.showerror("Ошибка", f"Не удалось импортировать таблицу:\n{e}")
 
 
 def refresh_laser_import_table(self):
