@@ -4565,7 +4565,8 @@ class ProductionApp:
             available = int(row["Доступно"])
             written_off = writeoff_summary.get(mat_id, 0)
 
-            if not show_zero and total_qty == 0:
+            # 🆕 Фильтрация по доступному (а не по total_qty)
+            if not show_zero and available == 0:
                 continue
 
             size_str = f"{row['Ширина']}x{row['Длина']}"
@@ -4581,7 +4582,19 @@ class ProductionApp:
                 row["Общая площадь"]
             )
 
-            self.balance_tree.insert("", "end", values=values)
+            # 🆕 ЦВЕТОВАЯ ИНДИКАЦИЯ
+            if available < 0:
+                tag = 'negative'  # Отрицательное - красный
+            elif available == 0:
+                tag = 'zero'  # Нулевое - жёлтый
+            else:
+                tag = ''  # Нормальное - без цвета
+
+            self.balance_tree.insert("", "end", values=values, tags=(tag,))
+
+        # 🆕 НАСТРОЙКА ЦВЕТОВ
+        self.balance_tree.tag_configure('negative', background='#ffcccc', foreground='#b71c1c')  # Светло-красный
+        self.balance_tree.tag_configure('zero', background='#fff9c4', foreground='#856404')  # Светло-жёлтый
 
         self.auto_resize_columns(self.balance_tree)
 
@@ -4611,68 +4624,6 @@ class ProductionApp:
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
 
-    def refresh_balance(self):
-        """Обновление баланса материалов"""
-        # Удаляем ВСЕ строки из баланса
-        for i in self.balance_tree.get_children():
-            self.balance_tree.delete(i)
-
-        # Загружаем актуальные данные со склада
-        materials_df = load_data("Materials")
-
-        # Если материалов нет - выходим (таблица уже пустая)
-        if materials_df.empty:
-            return
-
-        # Получаем состояния фильтров
-        show_negative = True
-        show_zero = True
-        show_positive = True
-
-        if hasattr(self, 'balance_toggles') and self.balance_toggles:
-            show_negative = self.balance_toggles.get('show_negative', tk.BooleanVar(value=True)).get()
-            show_zero = self.balance_toggles.get('show_zero', tk.BooleanVar(value=True)).get()
-            show_positive = self.balance_toggles.get('show_positive', tk.BooleanVar(value=True)).get()
-
-        # Проходим ТОЛЬКО по материалам, которые есть на складе
-        for _, row in materials_df.iterrows():
-            qty = int(row["Количество штук"])
-            reserved = int(row["Зарезервировано"])
-
-            # ИСПРАВЛЕНИЕ: Итого = В наличии - Зарезервировано
-            total = qty - reserved
-
-            # Применяем фильтры
-            if total < 0 and not show_negative:
-                continue
-            if total == 0 and not show_zero:
-                continue
-            if total > 0 and not show_positive:
-                continue
-
-            size_str = f"{row['Ширина']} x {row['Длина']}"
-
-            values = [
-                f"ID: {row['ID']}",
-                row["Марка"],
-                f"{row['Толщина']} мм",
-                size_str,
-                qty,
-                reserved,
-                total
-            ]
-
-            # Определяем цвет строки
-            if total < 0:
-                tag = 'negative'
-            elif total == 0:
-                tag = 'zero'
-            else:
-                tag = 'positive'
-
-            self.balance_tree.insert("", "end", values=values, tags=(tag,))
-
-        self.auto_resize_columns(self.balance_tree)
 
 if __name__ == "__main__":
     try:
