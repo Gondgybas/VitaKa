@@ -78,6 +78,9 @@ class ProductionApp:
         self.balance_toggles = {}
         self.writeoffs_toggles = {}
 
+        # 🆕 Инициализация данных для импорта от лазерщиков
+        self.laser_table_data = []
+
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
@@ -3050,79 +3053,131 @@ class ProductionApp:
                   font=("Arial", 12, "bold"), command=save_changes).pack(pady=15)
 
     def setup_laser_import_tab(self):
-        """Вкладка для импорта таблицы от лазерщиков"""
-        header = tk.Label(self.laser_import_frame, text="Импорт таблицы от лазерщиков для списания",
-                          font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
+        """Вкладка импорта от лазерщиков - ЕДИНСТВЕННАЯ ВЕРСИЯ"""
+
+        # Очищаем фрейм на случай повторного вызова
+        for widget in self.laser_import_frame.winfo_children():
+            widget.destroy()
+
+        # Заголовок
+        header = tk.Label(self.laser_import_frame, text="📥 Импорт данных от лазерщиков",
+                          font=("Arial", 16, "bold"), bg='white', fg='#e67e22')
         header.pack(pady=10)
 
         # Инструкция
-        info_frame = tk.LabelFrame(self.laser_import_frame, text="📋 Инструкция", bg='#e8f4f8',
-                                   font=("Arial", 10, "bold"))
-        info_frame.pack(fill=tk.X, padx=10, pady=5)
+        info_frame = tk.LabelFrame(self.laser_import_frame, text="ℹ️ Информация",
+                                   bg='#d1ecf1', font=("Arial", 10, "bold"))
+        info_frame.pack(fill=tk.X, padx=20, pady=10)
 
-        instruction_text = """
-    1. Импортируйте таблицу от лазерщиков (Excel с колонками: Дата, Время, username, order, metal, metal_quantity, part, part_quantity)
-    2. Система автоматически найдет заявки и материалы
-    3. Нажмите "Списать все" для массового списания
-    4. Или выберите строки и списывайте по одной
+        instructions = """
+    📋 Формат файла CSV:
+    • Колонки: Дата (МСК), Время (МСК), username, order, metal, metal_quantity, part, part_quantity
+
+    📌 Что делает импорт:
+    1. Читает файл от лазерщиков
+    2. Отображает все строки в таблице
+    3. Позволяет выбрать строки для списания
+    4. Автоматически находит резервы и списывает материал
         """
-        tk.Label(info_frame, text=instruction_text, bg='#e8f4f8', font=("Arial", 9), justify=tk.LEFT).pack(padx=10,
-                                                                                                           pady=5)
 
-        # Таблица
+        tk.Label(info_frame, text=instructions, bg='#d1ecf1',
+                 font=("Arial", 9), justify=tk.LEFT).pack(padx=10, pady=5)
+
+        # Кнопки управления
+        buttons_frame = tk.Frame(self.laser_import_frame, bg='white')
+        buttons_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        btn_style = {"font": ("Arial", 10, "bold"), "width": 20, "height": 2}
+
+        tk.Button(buttons_frame, text="📁 Импорт файла", bg='#3498db', fg='white',
+                  command=self.import_laser_table, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(buttons_frame, text="✅ Списать выбранные", bg='#27ae60', fg='white',
+                  command=self.writeoff_laser_row, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(buttons_frame, text="🗑️ Удалить строки", bg='#e74c3c', fg='white',
+                  command=self.delete_laser_row, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(buttons_frame, text="💾 Экспорт таблицы", bg='#9b59b6', fg='white',
+                  command=self.export_laser_table, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        # После кнопок управления добавьте:
+        tk.Button(buttons_frame, text="🔍 ТЕСТ: Добавить 3 строки", bg='#f39c12', fg='white',
+                  command=self.test_add_rows, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        # Метка таблицы
+        table_label = tk.Label(self.laser_import_frame,
+                               text="📊 Импортированные данные (выберите строки для списания)",
+                               font=("Arial", 11, "bold"), bg='white', fg='#2c3e50')
+        table_label.pack(pady=5)
+
+        # Фрейм для таблицы
         tree_frame = tk.Frame(self.laser_import_frame, bg='white')
-        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
 
+        # Scrollbars
         scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
         scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
 
-        self.laser_import_tree = ttk.Treeview(tree_frame,
-                                              columns=("Дата", "Время", "username", "order", "metal", "metal_qty",
-                                                       "part", "part_qty", "Статус"),
-                                              show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+        # 🆕 СОЗДАНИЕ TREEVIEW С ЯВНЫМИ ПАРАМЕТРАМИ
+        self.laser_import_tree = ttk.Treeview(
+            tree_frame,
+            columns=("Дата", "Время", "Пользователь", "Заказ", "Металл", "Кол-во", "Деталь", "Кол-во деталей",
+                     "Списано", "Дата списания"),
+            show="headings",
+            height=20,  # 🆕 ЯВНАЯ ВЫСОТА
+            selectmode='extended',
+            yscrollcommand=scroll_y.set,
+            xscrollcommand=scroll_x.set
+        )
 
         scroll_y.config(command=self.laser_import_tree.yview)
         scroll_x.config(command=self.laser_import_tree.xview)
+
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
 
         # Настройка колонок
         columns_config = {
-            "Дата": 100, "Время": 80, "username": 120, "order": 200,
-            "metal": 200, "metal_qty": 80, "part": 200, "part_qty": 80, "Статус": 150
+            "Дата": 100,
+            "Время": 80,
+            "Пользователь": 120,
+            "Заказ": 200,
+            "Металл": 200,
+            "Кол-во": 80,
+            "Деталь": 200,
+            "Кол-во деталей": 120,
+            "Списано": 80,
+            "Дата списания": 150
         }
 
         for col, width in columns_config.items():
             self.laser_import_tree.heading(col, text=col)
             self.laser_import_tree.column(col, width=width, anchor=tk.CENTER)
 
-        self.laser_import_tree.pack(fill=tk.BOTH, expand=True)
+        # 🆕 ВАЖНО: pack() ПОСЛЕ настройки колонок
+        self.laser_import_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         # Цветовая индикация
-        self.laser_import_tree.tag_configure('success', background='#c8e6c9')  # Зеленый - списано
-        self.laser_import_tree.tag_configure('pending', background='#fff9c4')  # Желтый - ожидает
-        self.laser_import_tree.tag_configure('error', background='#ffcccc')  # Красный - ошибка
+        self.laser_import_tree.tag_configure('written_off', background='#c8e6c9', foreground='#1b5e20')
+        self.laser_import_tree.tag_configure('pending', background='#fff9c4', foreground='#000000')
+        self.laser_import_tree.tag_configure('error', background='#ffcccc', foreground='#b71c1c')
 
-        # Кнопки
-        buttons_frame = tk.Frame(self.laser_import_frame, bg='white')
-        buttons_frame.pack(fill=tk.X, padx=10, pady=10)
+        # Статусная строка
+        self.laser_status_label = tk.Label(
+            self.laser_import_frame,
+            text="📂 Импортируйте файл для начала работы",
+            font=("Arial", 10),
+            bg='#ecf0f1',
+            fg='#2c3e50',
+            relief=tk.SUNKEN,
+            anchor='w',
+            padx=10,
+            pady=5
+        )
+        self.laser_status_label.pack(fill=tk.X, side=tk.BOTTOM, padx=20, pady=10)
 
-        btn_style = {"font": ("Arial", 10), "width": 18, "height": 2}
-
-        tk.Button(buttons_frame, text="📁 Импорт таблицы", bg='#3498db', fg='white',
-                  command=self.import_laser_writeoff_table, **btn_style).pack(side=tk.LEFT, padx=5)
-
-        tk.Button(buttons_frame, text="✅ Списать выбранную", bg='#27ae60', fg='white',
-                  command=self.writeoff_selected_laser_row, **btn_style).pack(side=tk.LEFT, padx=5)
-
-        tk.Button(buttons_frame, text="🚀 Списать ВСЕ", bg='#e67e22', fg='white',
-                  command=self.writeoff_all_laser_rows, **btn_style).pack(side=tk.LEFT, padx=5)
-
-        tk.Button(buttons_frame, text="🗑️ Очистить таблицу", bg='#e74c3c', fg='white',
-                  command=self.clear_laser_table, **btn_style).pack(side=tk.LEFT, padx=5)
-
-        # Хранилище данных
-        self.laser_import_data = []
+        print("✅ setup_laser_import_tab() выполнен успешно")  # DEBUG
 
     def import_laser_writeoff_table(self):
         """Импорт таблицы от лазерщиков"""
@@ -3158,14 +3213,18 @@ class ProductionApp:
             messagebox.showerror("Ошибка", f"Не удалось импортировать:\n{e}")
 
     def refresh_laser_import_table(self):
-        """Обновление таблицы импорта"""
-        for i in self.laser_import_tree.get_children():
-            self.laser_import_tree.delete(i)
+        """Обновление таблицы импорта от лазерщиков"""
+        # Очищаем таблицу
+        for item in self.laser_import_tree.get_children():
+            self.laser_import_tree.delete(item)
 
-        if not hasattr(self, 'laser_import_data') or not self.laser_import_data:
+        # 🆕 ЗАЩИТА ОТ ОШИБКИ
+        if not hasattr(self, 'laser_table_data') or self.laser_table_data is None:
+            self.laser_table_data = []
             return
 
-        for row_data in self.laser_import_data:
+        # Заполняем таблицу
+        for row_data in self.laser_table_data:
             date_val = row_data.get("Дата (МСК)", "")
             time_val = row_data.get("Время (МСК)", "")
             username = row_data.get("username", "")
@@ -3174,14 +3233,14 @@ class ProductionApp:
             metal_qty = row_data.get("metal_quantity", "")
             part = row_data.get("part", "")
             part_qty = row_data.get("part_quantity", "")
-            status = row_data.get("_status", "Ожидает списания")
+            written_off = row_data.get("Списано", "")
+            writeoff_date = row_data.get("Дата списания", "")
 
-            values = (date_val, time_val, username, order, metal, metal_qty, part, part_qty, status)
+            values = (date_val, time_val, username, order, metal, metal_qty, part, part_qty, written_off, writeoff_date)
 
-            if status == "✅ Списано":
-                tag = 'success'
-            elif "Ошибка" in status:
-                tag = 'error'
+            # Определяем тег для цветовой индикации
+            if written_off == "Да" or written_off == "✓":
+                tag = 'written_off'
             else:
                 tag = 'pending'
 
@@ -3396,52 +3455,729 @@ class ProductionApp:
 
         messagebox.showinfo("Успех", "Таблица очищена")
 
+    # ==================== МЕТОДЫ ДЛЯ ВКЛАДКИ ИМПОРТА ОТ ЛАЗЕРЩИКОВ ====================
+
+    def import_laser_table(self):
+        """Импорт таблицы от лазерщиков"""
+        file_path = filedialog.askopenfilename(
+            title="Выберите файл от лазерщиков",
+            filetypes=[("CSV files", "*.csv"), ("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
+        )
+
+        if not file_path:
+            return
+
+        try:
+            print(f"\n{'=' * 60}")
+            print(f"🔵 НАЧАЛО ИМПОРТА: {file_path}")
+            print(f"{'=' * 60}")
+
+            # Загрузка файла
+            if file_path.endswith('.csv'):
+                try:
+                    laser_df = pd.read_csv(file_path, sep=';', encoding='utf-8')
+                    print(f"✅ CSV загружен (sep=';', utf-8)")
+                except:
+                    laser_df = pd.read_csv(file_path, sep=';', encoding='cp1251')
+                    print(f"✅ CSV загружен (sep=';', cp1251)")
+            else:
+                laser_df = pd.read_excel(file_path, engine='openpyxl')
+                print(f"✅ Excel загружен")
+
+            print(f"📊 Всего строк в файле: {len(laser_df)}")
+            print(f"📋 Колонки: {list(laser_df.columns)}")
+
+            # Проверка обязательных колонок
+            required = ["Дата (МСК)", "Время (МСК)", "username", "order", "metal", "metal_quantity", "part",
+                        "part_quantity"]
+            missing = [col for col in required if col not in laser_df.columns]
+
+            if missing:
+                error_msg = f"Отсутствуют колонки:\n{', '.join(missing)}"
+                print(f"❌ {error_msg}")
+                messagebox.showerror("Ошибка", error_msg)
+                return
+
+            # Добавляем колонки статуса
+            if "Списано" not in laser_df.columns:
+                laser_df["Списано"] = ""
+            if "Дата списания" not in laser_df.columns:
+                laser_df["Дата списания"] = ""
+
+            # Сохраняем данные
+            self.laser_table_data = laser_df.to_dict('records')
+            print(f"💾 Сохранено в self.laser_table_data: {len(self.laser_table_data)} записей")
+
+            # 🆕 ОЧИЩАЕМ ТАБЛИЦУ
+            print(f"🗑️ Очистка таблицы...")
+            for item in self.laser_import_tree.get_children():
+                self.laser_import_tree.delete(item)
+            print(f"✅ Таблица очищена")
+
+            # 🆕 ЗАПОЛНЯЕМ ТАБЛИЦУ
+            print(f"➕ Начало заполнения таблицы...")
+            added = 0
+
+            for idx, row_data in enumerate(self.laser_table_data):
+                date_val = str(row_data.get("Дата (МСК)", ""))
+                time_val = str(row_data.get("Время (МСК)", ""))
+                username = str(row_data.get("username", ""))
+                order = str(row_data.get("order", ""))
+                metal = str(row_data.get("metal", ""))
+                metal_qty = str(row_data.get("metal_quantity", ""))
+                part = str(row_data.get("part", ""))
+                part_qty = str(row_data.get("part_quantity", ""))
+                written_off = str(row_data.get("Списано", ""))
+                writeoff_date = str(row_data.get("Дата списания", ""))
+
+                values = (date_val, time_val, username, order, metal, metal_qty, part, part_qty, written_off,
+                          writeoff_date)
+
+                tag = 'written_off' if written_off in ["Да", "✓", "Yes"] else 'pending'
+
+                item_id = self.laser_import_tree.insert("", "end", values=values, tags=(tag,))
+                added += 1
+
+                # Показываем первые 3 строки
+                if idx < 3:
+                    print(f"  ✓ Строка {idx + 1}: {order[:40]}... [{tag}]")
+
+            print(f"✅ Добавлено в таблицу: {added} строк")
+
+            # 🆕 ПРОВЕРКА СОДЕРЖИМОГО TREEVIEW
+            items_in_tree = len(self.laser_import_tree.get_children())
+            print(f"🔍 Проверка: элементов в Treeview = {items_in_tree}")
+
+            # 🆕 ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ ИНТЕРФЕЙСА
+            self.laser_import_tree.update_idletasks()
+            self.laser_import_frame.update()
+
+            # Автоширина колонок
+            self.auto_resize_columns(self.laser_import_tree)
+
+            # Обновляем статус
+            if hasattr(self, 'laser_status_label'):
+                self.laser_status_label.config(
+                    text=f"✅ Импортировано: {len(self.laser_table_data)} записей | Отображено: {items_in_tree} строк",
+                    bg='#d4edda',
+                    fg='#155724'
+                )
+
+            print(f"{'=' * 60}")
+            print(f"✅ ИМПОРТ ЗАВЕРШЕН УСПЕШНО")
+            print(f"{'=' * 60}\n")
+
+            messagebox.showinfo("Успех",
+                                f"✅ Импортировано: {len(self.laser_table_data)} записей\n"
+                                f"📊 Отображено в таблице: {items_in_tree} строк\n\n"
+                                f"Выберите строки и нажмите 'Списать выбранные'")
+
+        except Exception as e:
+            print(f"💥 КРИТИЧЕСКАЯ ОШИБКА: {e}")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("Ошибка", f"Не удалось импортировать:\n{e}")
+
+
+
+    def refresh_laser_import_table(self):
+        """Обновление таблицы импорта от лазерщиков"""
+        # Очищаем таблицу
+        for item in self.laser_import_tree.get_children():
+            self.laser_import_tree.delete(item)
+
+        # Заполняем таблицу
+        for row_data in self.laser_table_data:
+            date_val = row_data.get("Дата (МСК)", "")
+            time_val = row_data.get("Время (МСК)", "")
+            username = row_data.get("username", "")
+            order = row_data.get("order", "")
+            metal = row_data.get("metal", "")
+            metal_qty = row_data.get("metal_quantity", "")
+            part = row_data.get("part", "")
+            part_qty = row_data.get("part_quantity", "")
+            written_off = row_data.get("Списано", "")
+            writeoff_date = row_data.get("Дата списания", "")
+
+            values = (date_val, time_val, username, order, metal, metal_qty, part, part_qty, written_off, writeoff_date)
+
+            # Определяем тег для цветовой индикации
+            if written_off == "Да" or written_off == "✓":
+                tag = 'written_off'
+            else:
+                tag = 'pending'
+
+            self.laser_import_tree.insert("", "end", values=values, tags=(tag,))
+
+        self.auto_resize_columns(self.laser_import_tree)
+
+    def test_add_rows(self):
+        """Тестовая функция для проверки отображения строк"""
+        print("\n🧪 ТЕСТ: Добавление тестовых строк...")
+
+        # Очищаем
+        for item in self.laser_import_tree.get_children():
+            self.laser_import_tree.delete(item)
+
+        # Добавляем 3 тестовые строки
+        test_data = [
+            ("01.01.2026", "10:00", "@test1", "Тест заказ 1", "Ст3 10х1500х3000", "5", "Деталь A", "100", "", ""),
+            ("02.01.2026", "11:00", "@test2", "Тест заказ 2", "Ст3 12х1500х3000", "3", "Деталь B", "50", "", ""),
+            ("03.01.2026", "12:00", "@test3", "Тест заказ 3", "09Г2С 8х1500х3000", "2", "Деталь C", "75", "", "")
+        ]
+
+        for idx, values in enumerate(test_data, 1):
+            item_id = self.laser_import_tree.insert("", "end", values=values, tags=('pending',))
+            print(f"  ✓ Тестовая строка {idx} добавлена: ID={item_id}")
+
+        # Проверка
+        items_count = len(self.laser_import_tree.get_children())
+        print(f"✅ ТЕСТ: В таблице {items_count} элементов")
+
+        # Принудительное обновление
+        self.laser_import_tree.update_idletasks()
+
+        messagebox.showinfo("Тест", f"Добавлено тестовых строк: {items_count}")
+
+    def writeoff_laser_row(self):
+        """Списание выбранных строк с точным сопоставлением заказа, материала и детали"""
+        selected_items = self.laser_import_tree.selection()
+
+        if not selected_items:
+            messagebox.showwarning("Предупреждение", "Выберите строки для списания!")
+            return
+
+        # Проверяем, что выбранные строки еще не списаны
+        rows_to_writeoff = []
+        already_written_off = []
+
+        for item in selected_items:
+            values = self.laser_import_tree.item(item)['values']
+            if values[8] in ["Да", "✓", "Yes"]:  # Колонка "Списано"
+                already_written_off.append(values[3])  # order
+            else:
+                rows_to_writeoff.append((item, values))
+
+        if already_written_off:
+            messagebox.showinfo("Информация",
+                                f"Некоторые строки уже списаны:\n" + "\n".join(already_written_off[:5]))
+
+        if not rows_to_writeoff:
+            messagebox.showwarning("Предупреждение", "Нет строк для списания!")
+            return
+
+        # Подтверждение
+        if not messagebox.askyesno("Подтверждение",
+                                   f"Списать выбранные строки ({len(rows_to_writeoff)} шт)?"):
+            return
+
+        try:
+            # Загружаем данные
+            orders_df = load_data("Orders")
+            reservations_df = load_data("Reservations")
+            materials_df = load_data("Materials")
+            writeoffs_df = load_data("WriteOffs")
+            order_details_df = load_data("OrderDetails")
+
+            success_count = 0
+            errors = []
+
+            print(f"\n{'=' * 80}")
+            print(f"🔵 НАЧАЛО СПИСАНИЯ: {len(rows_to_writeoff)} строк(и)")
+            print(f"{'=' * 80}")
+
+            for item, values in rows_to_writeoff:
+                try:
+                    date_val, time_val, username, order_name, metal_desc, metal_qty_str, part_name, part_qty = values[
+                        :8]
+
+                    print(f"\n📋 Обработка строки:")
+                    print(f"   Заказ: {order_name}")
+                    print(f"   Металл: {metal_desc}")
+                    print(f"   Количество металла: {metal_qty_str}")
+                    print(f"   Деталь: {part_name}")
+
+                    # ========== ШАГ 1: ПОИСК ЗАКАЗА ==========
+                    # Ищем по точному совпадению или по номеру УП-XXX
+                    order_match = None
+
+                    # Пробуем найти номер УП-XXX
+                    import re
+                    up_match = re.search(r'УП-(\d+)', order_name)
+                    if up_match:
+                        up_number = up_match.group(1)
+                        order_match = orders_df[
+                            orders_df["Название заказа"].str.contains(f"УП-{up_number}", case=False, na=False)]
+                        print(f"   🔍 Поиск по УП-{up_number}")
+
+                    # Если не нашли, ищем по частичному совпадению названия
+                    if order_match is None or order_match.empty:
+                        order_match = orders_df[
+                            orders_df["Название заказа"].str.contains(order_name, case=False, na=False)]
+                        print(f"   🔍 Поиск по названию: {order_name}")
+
+                    if order_match.empty:
+                        errors.append(f"❌ Заказ '{order_name}' не найден в базе")
+                        print(f"   ❌ Заказ не найден")
+                        continue
+
+                    order_id = int(order_match.iloc[0]["ID заказа"])
+                    print(f"   ✅ Заказ найден: ID={order_id}")
+
+                    # ========== ШАГ 2: ПАРСИНГ МАТЕРИАЛА ==========
+                    # Пример: "ГК Ст.3 6х1500х3000" → марка="ГК Ст.3", толщина=6, ширина=1500, длина=3000
+                    metal_parts = metal_desc.strip().split()
+
+                    # Ищем размеры (формат: NxMxK или NхMхK)
+                    thickness = None
+                    width = None
+                    length = None
+                    marka = None
+
+                    for part in metal_parts:
+                        # Проверяем на размеры
+                        size_match = re.search(r'(\d+(?:\.\d+)?)[хxХX](\d+(?:\.\d+)?)[хxХX](\d+(?:\.\d+)?)', part)
+                        if size_match:
+                            thickness = float(size_match.group(1))
+                            width = float(size_match.group(2))
+                            length = float(size_match.group(3))
+                            # Марка - всё до размеров
+                            marka_parts = metal_desc.split(part)[0].strip().split()
+                            marka = " ".join(marka_parts)
+                            break
+
+                    if not thickness or not marka:
+                        errors.append(f"❌ Не удалось распарсить материал: {metal_desc}")
+                        print(f"   ❌ Ошибка парсинга материала")
+                        continue
+
+                    print(f"   📦 Распарсенный материал:")
+                    print(f"      Марка: {marka}")
+                    print(f"      Толщина: {thickness} мм")
+                    print(f"      Размер: {width}x{length}")
+
+                    # ========== ШАГ 3: ПОИСК ДЕТАЛИ В ЗАКАЗЕ ==========
+                    detail_id = None
+                    detail_match = order_details_df[
+                        (order_details_df["ID заказа"] == order_id) &
+                        (order_details_df["Название детали"].str.contains(part_name, case=False, na=False))
+                        ]
+
+                    if not detail_match.empty:
+                        detail_id = int(detail_match.iloc[0]["ID"])
+                        print(f"   🔧 Деталь найдена: ID={detail_id}, Название='{part_name}'")
+                    else:
+                        print(f"   ⚠️ Деталь '{part_name}' не найдена в заказе (списание без привязки)")
+
+                    # ========== ШАГ 4: ПОИСК РЕЗЕРВА С УЧЕТОМ МАТЕРИАЛА И ДЕТАЛИ ==========
+                    # Ищем резервы этого заказа
+                    order_reserves = reservations_df[
+                        (reservations_df["ID заказа"] == order_id) &
+                        (reservations_df["Остаток к списанию"] > 0)
+                        ]
+
+                    if order_reserves.empty:
+                        errors.append(f"❌ Нет доступных резервов для заказа '{order_name}'")
+                        print(f"   ❌ Резервы не найдены")
+                        continue
+
+                    print(f"   🔍 Найдено резервов для заказа: {len(order_reserves)}")
+
+                    # Фильтруем резервы по материалу
+                    suitable_reserves = order_reserves[
+                        (order_reserves["Марка"].str.contains(marka, case=False, na=False)) &
+                        (order_reserves["Толщина"] == thickness)
+                        ]
+
+                    # Если указаны размеры, фильтруем и по ним
+                    if width and length:
+                        suitable_reserves = suitable_reserves[
+                            (suitable_reserves["Ширина"] == width) &
+                            (suitable_reserves["Длина"] == length)
+                            ]
+
+                    print(f"   🔍 Подходящих по материалу: {len(suitable_reserves)}")
+
+                    # Если найдена деталь, фильтруем по детали
+                    if detail_id:
+                        detail_reserves = suitable_reserves[suitable_reserves["ID детали"] == detail_id]
+                        if not detail_reserves.empty:
+                            suitable_reserves = detail_reserves
+                            print(f"   ✅ Резервы с привязкой к детали ID={detail_id}: {len(suitable_reserves)}")
+
+                    if suitable_reserves.empty:
+                        errors.append(
+                            f"❌ Не найден резерв для:\n"
+                            f"   Заказ: {order_name}\n"
+                            f"   Материал: {marka} {thickness}мм {width}x{length}\n"
+                            f"   Деталь: {part_name}"
+                        )
+                        print(f"   ❌ Подходящий резерв не найден")
+                        continue
+
+                    # Берём первый подходящий резерв
+                    reserve_row = suitable_reserves.iloc[0]
+                    reserve_id = int(reserve_row["ID резерва"])
+                    remainder = int(reserve_row["Остаток к списанию"])
+
+                    print(f"   ✅ Выбран резерв ID={reserve_id}, остаток={remainder} шт")
+
+                    # ========== ШАГ 5: КОЛИЧЕСТВО ДЛЯ СПИСАНИЯ ==========
+                    try:
+                        qty_to_writeoff = int(metal_qty_str)
+                    except:
+                        qty_to_writeoff = 1
+
+                    if qty_to_writeoff > remainder:
+                        errors.append(
+                            f"⚠️ Недостаточно материала в резерве #{reserve_id}:\n"
+                            f"   Запрошено: {qty_to_writeoff}, Доступно: {remainder}"
+                        )
+                        print(f"   ⚠️ Недостаточно материала: нужно {qty_to_writeoff}, есть {remainder}")
+                        # Списываем сколько есть
+                        qty_to_writeoff = remainder
+
+                    print(f"   📝 Будет списано: {qty_to_writeoff} шт")
+
+                    # ========== ШАГ 6: СОЗДАНИЕ СПИСАНИЯ ==========
+                    new_writeoff_id = 1 if writeoffs_df.empty else int(writeoffs_df["ID списания"].max()) + 1
+
+                    new_writeoff = pd.DataFrame([{
+                        "ID списания": new_writeoff_id,
+                        "ID резерва": reserve_id,
+                        "ID заказа": reserve_row["ID заказа"],
+                        "ID материала": reserve_row["ID материала"],
+                        "Марка": reserve_row["Марка"],
+                        "Толщина": reserve_row["Толщина"],
+                        "Длина": reserve_row["Длина"],
+                        "Ширина": reserve_row["Ширина"],
+                        "Количество": qty_to_writeoff,
+                        "Дата списания": f"{date_val} {time_val}",
+                        "Комментарий": f"Лазер: {username} | Деталь: {part_name}"
+                    }])
+
+                    writeoffs_df = pd.concat([writeoffs_df, new_writeoff], ignore_index=True)
+
+                    # ========== ШАГ 7: ОБНОВЛЕНИЕ РЕЗЕРВА ==========
+                    new_written_off = int(reserve_row["Списано"]) + qty_to_writeoff
+                    new_remainder = int(reserve_row["Зарезервировано штук"]) - new_written_off
+
+                    reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Списано"] = new_written_off
+                    reservations_df.loc[
+                        reservations_df["ID резерва"] == reserve_id, "Остаток к списанию"] = new_remainder
+
+                    print(f"   ✅ Резерв обновлен: Списано={new_written_off}, Остаток={new_remainder}")
+
+                    # ========== ШАГ 8: ОБНОВЛЕНИЕ МАТЕРИАЛА НА СКЛАДЕ ==========
+                    material_id = int(reserve_row["ID материала"])
+                    if material_id != -1:
+                        material = materials_df[materials_df["ID"] == material_id]
+                        if not material.empty:
+                            material = material.iloc[0]
+
+                            new_qty = int(material["Количество штук"]) - qty_to_writeoff
+                            new_reserved = int(material["Зарезервировано"]) - qty_to_writeoff
+
+                            materials_df.loc[materials_df["ID"] == material_id, "Количество штук"] = new_qty
+                            materials_df.loc[materials_df["ID"] == material_id, "Зарезервировано"] = new_reserved
+
+                            # Пересчитываем площадь
+                            area_per_piece = float(material["Длина"]) * float(material["Ширина"]) / 1_000_000
+                            new_area = new_qty * area_per_piece
+                            materials_df.loc[materials_df["ID"] == material_id, "Общая площадь"] = round(new_area, 2)
+
+                            print(f"   ✅ Склад обновлен: Всего={new_qty}, Зарезервировано={new_reserved}")
+
+                    # ========== ШАГ 9: ОБНОВЛЕНИЕ СТАТУСА В ТАБЛИЦЕ ИМПОРТА ==========
+                    item_index = self.laser_import_tree.index(item)
+                    self.laser_table_data[item_index]["Списано"] = "✓"
+                    self.laser_table_data[item_index]["Дата списания"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+                    success_count += 1
+                    print(f"   ✅ СПИСАНИЕ ВЫПОЛНЕНО УСПЕШНО")
+
+                except Exception as e:
+                    error_msg = f"❌ Ошибка обработки строки '{order_name}': {str(e)}"
+                    errors.append(error_msg)
+                    print(f"   {error_msg}")
+                    import traceback
+                    traceback.print_exc()
+
+            # ========== СОХРАНЕНИЕ ИЗМЕНЕНИЙ ==========
+            print(f"\n{'=' * 80}")
+            print(f"💾 СОХРАНЕНИЕ ИЗМЕНЕНИЙ В БАЗУ ДАННЫХ")
+            print(f"{'=' * 80}")
+
+            save_data("WriteOffs", writeoffs_df)
+            save_data("Reservations", reservations_df)
+            save_data("Materials", materials_df)
+
+            print(f"✅ Данные сохранены")
+
+            # ========== ОБНОВЛЕНИЕ ИНТЕРФЕЙСА ==========
+            print(f"\n🔄 Обновление интерфейса...")
+            self.refresh_laser_import_table()
+            self.refresh_materials()
+            self.refresh_reservations()
+            self.refresh_writeoffs()
+            self.refresh_balance()
+            print(f"✅ Интерфейс обновлен")
+
+            # ========== РЕЗУЛЬТАТ ==========
+            print(f"\n{'=' * 80}")
+            print(f"✅ СПИСАНИЕ ЗАВЕРШЕНО")
+            print(f"   Успешно: {success_count}")
+            print(f"   Ошибок: {len(errors)}")
+            print(f"{'=' * 80}\n")
+
+            result_msg = f"✅ Успешно списано: {success_count} записей"
+            if errors:
+                result_msg += f"\n\n⚠ Ошибки ({len(errors)}):\n" + "\n".join(errors[:10])
+                if len(errors) > 10:
+                    result_msg += f"\n... и еще {len(errors) - 10}"
+
+            messagebox.showinfo("Результат списания", result_msg)
+
+        except Exception as e:
+            print(f"\n💥 КРИТИЧЕСКАЯ ОШИБКА: {e}")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("Ошибка", f"Не удалось выполнить списание:\n{e}")
+
+    def edit_laser_row(self):
+        """Редактирование выбранной строки импорта"""
+        selected = self.laser_import_tree.selection()
+        if not selected or len(selected) != 1:
+            messagebox.showwarning("Предупреждение", "Выберите одну строку для редактирования!")
+            return
+
+        item_index = self.laser_import_tree.index(selected[0])
+        row_data = self.laser_table_data[item_index]
+
+        # Окно редактирования
+        edit_window = tk.Toplevel(self.root)
+        edit_window.title("Редактирование записи")
+        edit_window.geometry("500x400")
+        edit_window.configure(bg='#ecf0f1')
+
+        tk.Label(edit_window, text="Редактирование записи от лазерщиков",
+                 font=("Arial", 12, "bold"), bg='#ecf0f1').pack(pady=10)
+
+        # Поля для редактирования
+        fields = [
+            ("Заказ:", "order"),
+            ("Металл:", "metal"),
+            ("Кол-во металла:", "metal_quantity"),
+            ("Деталь:", "part"),
+            ("Кол-во деталей:", "part_quantity")
+        ]
+
+        entries = {}
+        for label_text, key in fields:
+            frame = tk.Frame(edit_window, bg='#ecf0f1')
+            frame.pack(fill=tk.X, padx=20, pady=5)
+            tk.Label(frame, text=label_text, width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
+            entry = tk.Entry(frame, font=("Arial", 10))
+            entry.insert(0, str(row_data.get(key, "")))
+            entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+            entries[key] = entry
+
+        def save_changes():
+            for key, entry in entries.items():
+                self.laser_table_data[item_index][key] = entry.get()
+
+            self.refresh_laser_import_table()
+            edit_window.destroy()
+            messagebox.showinfo("Успех", "Запись обновлена!")
+
+        tk.Button(edit_window, text="💾 Сохранить", bg='#3498db', fg='white',
+                  font=("Arial", 12, "bold"), command=save_changes).pack(pady=20)
+
+    def delete_laser_row(self):
+        """Удаление выбранных строк"""
+        selected_items = self.laser_import_tree.selection()
+
+        if not selected_items:
+            messagebox.showwarning("Предупреждение", "Выберите строки для удаления!")
+            return
+
+        if not messagebox.askyesno("Подтверждение",
+                                   f"Удалить выбранные строки ({len(selected_items)} шт)?"):
+            return
+
+        # Удаляем в обратном порядке, чтобы индексы не сбивались
+        indices_to_delete = sorted([self.laser_import_tree.index(item) for item in selected_items], reverse=True)
+
+        for index in indices_to_delete:
+            del self.laser_table_data[index]
+
+        self.refresh_laser_import_table()
+        messagebox.showinfo("Успех", f"Удалено записей: {len(indices_to_delete)}")
+
+    def export_laser_table(self):
+        """Экспорт таблицы обратно в Excel"""
+        if not self.laser_table_data:
+            messagebox.showwarning("Предупреждение", "Нет данных для экспорта!")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="Сохранить таблицу",
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            initialfile=f"laser_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        )
+
+        if not file_path:
+            return
+
+        try:
+            df = pd.DataFrame(self.laser_table_data)
+            df.to_excel(file_path, index=False, engine='openpyxl')
+            messagebox.showinfo("Успех", f"Таблица сохранена:\n{file_path}")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
+
+    # ==================== КОНЕЦ МЕТОДОВ ДЛЯ ИМПОРТА ОТ ЛАЗЕРЩИКОВ ====================
+
     def setup_balance_tab(self):
-        header = tk.Label(self.balance_frame, text="Баланс материалов", font=("Arial", 16, "bold"), bg='white',
-                          fg='#2c3e50')
+        """Вкладка баланса материалов"""
+        header = tk.Label(self.balance_frame, text="Баланс материалов",
+                          font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
         header.pack(pady=10)
-        info_label = tk.Label(self.balance_frame, text="Красный - не хватает | Желтый - на нуле | Зеленый - в наличии",
-                              font=("Arial", 10), bg='white', fg='#7f8c8d')
-        info_label.pack(pady=5)
+
         tree_frame = tk.Frame(self.balance_frame, bg='white')
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
         scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
         scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
+
         self.balance_tree = ttk.Treeview(tree_frame,
-                                         columns=("Материал", "Марка", "Толщина", "Размер", "В наличии",
-                                                  "Зарезервировано", "Итого"),
+                                         columns=("Марка", "Толщина", "Размер", "Всего", "Зарезервировано",
+                                                  "Списано", "Доступно", "Площадь"),
                                          show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+
         scroll_y.config(command=self.balance_tree.yview)
         scroll_x.config(command=self.balance_tree.xview)
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
-        columns_config = {"Материал": 100, "Марка": 120, "Толщина": 100, "Размер": 150,
-                          "В наличии": 100, "Зарезервировано": 130, "Итого": 100}
+
+        columns_config = {
+            "Марка": 100, "Толщина": 80, "Размер": 120, "Всего": 80,
+            "Зарезервировано": 120, "Списано": 80, "Доступно": 80, "Площадь": 100
+        }
+
         for col, width in columns_config.items():
             self.balance_tree.heading(col, text=col)
             self.balance_tree.column(col, width=width, anchor=tk.CENTER)
+
         self.balance_tree.pack(fill=tk.BOTH, expand=True)
+
+        # Панель фильтрации
+        self.balance_filters = self.create_filter_panel(
+            self.balance_frame,
+            self.balance_tree,
+            ["Марка", "Толщина", "Размер"],
+            self.refresh_balance
+        )
+
+        # Переключатели видимости
         self.balance_toggles = self.create_visibility_toggles(
             self.balance_frame,
             self.balance_tree,
             {
-                'show_negative': '🔴 Показать отрицательные',
-                'show_zero': '🟡 Показать нулевые',
-                'show_positive': '🟢 Показать положительные'
+                'show_zero_balance': '📦 Показать с нулевым балансом'
             },
             self.refresh_balance
         )
-        self.balance_tree.tag_configure('negative', background='#ffcccc')
-        self.balance_tree.tag_configure('zero', background='#fff9c4')
-        self.balance_tree.tag_configure('positive', background='#c8e6c9')
-
 
         buttons_frame = tk.Frame(self.balance_frame, bg='white')
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
+
         btn_style = {"font": ("Arial", 10), "width": 15, "height": 2}
-        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_balance,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(buttons_frame, text="🔄 Обновить", bg='#3498db', fg='white',
+                  command=self.refresh_balance, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(buttons_frame, text="📊 Экспорт в Excel", bg='#27ae60', fg='white',
+                  command=self.export_balance, **btn_style).pack(side=tk.LEFT, padx=5)
+
         self.refresh_balance()
+
+    def refresh_balance(self):
+        """Обновление баланса материалов"""
+        for item in self.balance_tree.get_children():
+            self.balance_tree.delete(item)
+
+        materials_df = load_data("Materials")
+        writeoffs_df = load_data("WriteOffs")
+
+        if materials_df.empty:
+            return
+
+        show_zero = True
+        if hasattr(self, 'balance_toggles') and self.balance_toggles:
+            show_zero = self.balance_toggles.get('show_zero_balance', tk.BooleanVar(value=True)).get()
+
+        # Группируем списания по материалам
+        writeoff_summary = {}
+        if not writeoffs_df.empty:
+            for _, row in writeoffs_df.iterrows():
+                mat_id = int(row["ID материала"])
+                qty = int(row["Количество"])
+                writeoff_summary[mat_id] = writeoff_summary.get(mat_id, 0) + qty
+
+        for _, row in materials_df.iterrows():
+            mat_id = int(row["ID"])
+            total_qty = int(row["Количество штук"])
+            reserved = int(row["Зарезервировано"])
+            available = int(row["Доступно"])
+            written_off = writeoff_summary.get(mat_id, 0)
+
+            if not show_zero and total_qty == 0:
+                continue
+
+            size_str = f"{row['Ширина']}x{row['Длина']}"
+
+            values = (
+                row["Марка"],
+                row["Толщина"],
+                size_str,
+                total_qty,
+                reserved,
+                written_off,
+                available,
+                row["Общая площадь"]
+            )
+
+            self.balance_tree.insert("", "end", values=values)
+
+        self.auto_resize_columns(self.balance_tree)
+
+    def export_balance(self):
+        """Экспорт баланса в Excel"""
+        file_path = filedialog.asksaveasfilename(
+            title="Сохранить баланс",
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            initialfile=f"balance_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        )
+
+        if not file_path:
+            return
+
+        try:
+            # Собираем данные из таблицы
+            data = []
+            for item in self.balance_tree.get_children():
+                values = self.balance_tree.item(item)['values']
+                data.append(values)
+
+            df = pd.DataFrame(data, columns=self.balance_tree['columns'])
+            df.to_excel(file_path, index=False, engine='openpyxl')
+
+            messagebox.showinfo("Успех", f"Баланс сохранен:\n{file_path}")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
 
     def refresh_balance(self):
         """Обновление баланса материалов"""
