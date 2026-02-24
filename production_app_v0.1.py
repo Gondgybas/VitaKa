@@ -77,6 +77,7 @@ class ProductionApp:
         self.reservations_toggles = {}
         self.balance_toggles = {}
         self.writeoffs_toggles = {}
+        self.details_toggles = {}
 
         # 🆕 Инициализация данных для импорта от лазерщиков
         self.laser_table_data = []
@@ -107,6 +108,17 @@ class ProductionApp:
         self.balance_frame = tk.Frame(self.notebook, bg='white')
         self.notebook.add(self.balance_frame, text='Баланс материалов')
         self.setup_balance_tab()
+
+        # 🆕 НОВАЯ ВКЛАДКА
+        self.details_frame = tk.Frame(self.notebook, bg='white')
+        self.notebook.add(self.details_frame, text='Учёт деталей')
+        self.setup_details_tab()
+
+        self.balance_frame = tk.Frame(self.notebook, bg='white')
+        self.notebook.add(self.balance_frame, text='Баланс материалов')
+        self.setup_balance_tab()
+
+        self.load_toggle_settings()
 
         # Загрузка настроек и обработчик закрытия
         self.load_toggle_settings()
@@ -3095,16 +3107,20 @@ class ProductionApp:
             # ========== ШАГ 6: ОБНОВЛЕНИЕ ИНТЕРФЕЙСА ==========
             print(f"\n🔄 Обновление интерфейса...")
 
+            # ОБНОВЛЕНИЕ ИНТЕРФЕЙСА
             self.refresh_writeoffs()
             self.refresh_reservations()
             self.refresh_materials()
             self.refresh_balance()
 
-            # 🆕 ОБНОВЛЯЕМ ВКЛАДКУ ЗАКАЗОВ
             if hasattr(self, 'refresh_orders'):
                 self.refresh_orders()
             if hasattr(self, 'refresh_order_details'):
                 self.refresh_order_details()
+
+            # 🆕 ОБНОВЛЯЕМ ВКЛАДКУ УЧЁТА ДЕТАЛЕЙ
+            if hasattr(self, 'refresh_details'):
+                self.refresh_details()
 
             print(f"✅ Интерфейс обновлён")
 
@@ -3541,6 +3557,458 @@ class ProductionApp:
         self.laser_status_label.pack(fill=tk.X, side=tk.BOTTOM, padx=20, pady=10)
 
         print("✅ setup_laser_import_tab() выполнен успешно")  # DEBUG
+
+    def setup_details_tab(self):
+        """Вкладка учёта деталей"""
+
+        # Заголовок
+        header = tk.Label(self.details_frame, text="📐 Учёт деталей по заказам",
+                          font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
+        header.pack(pady=10)
+
+        # Информационная панель
+        info_frame = tk.LabelFrame(self.details_frame, text="ℹ️ Информация",
+                                   bg='#d1ecf1', font=("Arial", 10, "bold"))
+        info_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        info_text = """
+    📊 Отображаются все детали из заказов со статусом "В работе"
+    🟢 Зелёный - деталь полностью порезана
+    🟡 Жёлтый - деталь в процессе
+    ⚪ Белый - деталь не начата
+        """
+
+        tk.Label(info_frame, text=info_text, bg='#d1ecf1',
+                 font=("Arial", 9), justify=tk.LEFT).pack(padx=10, pady=5)
+
+        # Фрейм для таблицы
+        tree_frame = tk.Frame(self.details_frame, bg='white')
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+
+        # Scrollbars
+        scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
+        scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
+
+        # Создание таблицы
+        self.details_tree = ttk.Treeview(
+            tree_frame,
+            columns=("ID", "Заказчик", "Название детали", "Заказ", "Количество", "Порезано", "Погнуто", "Осталось",
+                     "Прогресс %"),
+            show="headings",
+            yscrollcommand=scroll_y.set,
+            xscrollcommand=scroll_x.set
+        )
+
+        scroll_y.config(command=self.details_tree.yview)
+        scroll_x.config(command=self.details_tree.xview)
+        scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
+        scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # Настройка колонок
+        columns_config = {
+            "ID": 60,
+            "Заказчик": 200,
+            "Название детали": 300,
+            "Заказ": 200,
+            "Количество": 100,
+            "Порезано": 100,
+            "Погнуто": 100,
+            "Осталось": 100,
+            "Прогресс %": 100
+        }
+
+        for col, width in columns_config.items():
+            self.details_tree.heading(col, text=col)
+            self.details_tree.column(col, width=width, anchor=tk.CENTER)
+
+        self.details_tree.pack(fill=tk.BOTH, expand=True)
+
+        # Цветовые теги
+        self.details_tree.tag_configure('completed', background='#c8e6c9', foreground='#1b5e20')  # Зелёный
+        self.details_tree.tag_configure('in_progress', background='#fff9c4', foreground='#f57f17')  # Жёлтый
+        self.details_tree.tag_configure('not_started', background='#ffffff', foreground='#000000')  # Белый
+        self.details_tree.tag_configure('over_cut', background='#ffcccc',
+                                        foreground='#b71c1c')  # Красный (если порезано больше)
+
+        # Панель фильтрации
+        self.details_filters = self.create_filter_panel(
+            self.details_frame,
+            self.details_tree,
+            ["Заказчик", "Название детали", "Заказ"],
+            self.refresh_details
+        )
+
+        # Переключатели видимости
+        toggles_frame = tk.LabelFrame(self.details_frame, text="⚙️ Настройки отображения",
+                                      bg='#ecf0f1', font=("Arial", 10, "bold"))
+        toggles_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        self.details_toggles['show_completed'] = tk.BooleanVar(value=True)
+        self.details_toggles['show_not_started'] = tk.BooleanVar(value=True)
+        self.details_toggles['show_in_progress'] = tk.BooleanVar(value=True)
+
+        tk.Checkbutton(toggles_frame, text="🟢 Показать завершённые",
+                       variable=self.details_toggles['show_completed'],
+                       command=self.refresh_details, bg='#ecf0f1', font=("Arial", 10),
+                       activebackground='#ecf0f1').pack(side=tk.LEFT, padx=10)
+
+        tk.Checkbutton(toggles_frame, text="🟡 Показать в процессе",
+                       variable=self.details_toggles['show_in_progress'],
+                       command=self.refresh_details, bg='#ecf0f1', font=("Arial", 10),
+                       activebackground='#ecf0f1').pack(side=tk.LEFT, padx=10)
+
+        tk.Checkbutton(toggles_frame, text="⚪ Показать не начатые",
+                       variable=self.details_toggles['show_not_started'],
+                       command=self.refresh_details, bg='#ecf0f1', font=("Arial", 10),
+                       activebackground='#ecf0f1').pack(side=tk.LEFT, padx=10)
+
+        # Кнопки управления
+        buttons_frame = tk.Frame(self.details_frame, bg='white')
+        buttons_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        btn_style = {"font": ("Arial", 10, "bold"), "width": 18, "height": 2}
+
+        tk.Button(buttons_frame, text="🔄 Обновить", bg='#3498db', fg='white',
+                  command=self.refresh_details, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(buttons_frame, text="📊 Экспорт в Excel", bg='#27ae60', fg='white',
+                  command=self.export_details, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(buttons_frame, text="📈 Статистика", bg='#9c27b0', fg='white',
+                  command=self.show_details_statistics, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        # Статусная строка
+        self.details_status_label = tk.Label(
+            self.details_frame,
+            text="",
+            font=("Arial", 10),
+            bg='#ecf0f1',
+            fg='#2c3e50',
+            relief=tk.SUNKEN,
+            anchor='w',
+            padx=10,
+            pady=5
+        )
+        self.details_status_label.pack(fill=tk.X, side=tk.BOTTOM, padx=20, pady=10)
+
+        # Первоначальное заполнение
+        self.refresh_details()
+
+    def refresh_details(self):
+        """Обновление таблицы учёта деталей"""
+
+        # Очищаем таблицу
+        for item in self.details_tree.get_children():
+            self.details_tree.delete(item)
+
+        # Загружаем данные
+        orders_df = load_data("Orders")
+        order_details_df = load_data("OrderDetails")
+
+        if orders_df.empty or order_details_df.empty:
+            if hasattr(self, 'details_status_label'):
+                self.details_status_label.config(
+                    text="⚠️ Нет данных о деталях",
+                    bg='#fff3cd',
+                    fg='#856404'
+                )
+            return
+
+        # Читаем переключатели
+        show_completed = self.details_toggles['show_completed'].get()
+        show_in_progress = self.details_toggles['show_in_progress'].get()
+        show_not_started = self.details_toggles['show_not_started'].get()
+
+        # Фильтруем заказы со статусом "В работе"
+        active_orders = orders_df[orders_df["Статус"] == "В работе"]
+
+        if active_orders.empty:
+            if hasattr(self, 'details_status_label'):
+                self.details_status_label.config(
+                    text="ℹ️ Нет заказов в работе",
+                    bg='#d1ecf1',
+                    fg='#0c5460'
+                )
+            return
+
+        # Счётчики
+        total_count = 0
+        shown_count = 0
+        completed_count = 0
+        in_progress_count = 0
+        not_started_count = 0
+
+        # Получаем активные фильтры
+        active_filters = {}
+        if hasattr(self, 'details_filters') and self.details_filters:
+            for col_name, filter_var in self.details_filters.items():
+                filter_text = filter_var.get().strip().lower()
+                if filter_text:
+                    active_filters[col_name] = filter_text
+
+        # Проходим по всем деталям активных заказов
+        for _, order_row in active_orders.iterrows():
+            order_id = int(order_row["ID заказа"])
+            order_name = order_row["Название заказа"]
+            customer_name = order_row["Заказчик"]
+
+            # Получ��ем детали этого заказа
+            order_details = order_details_df[order_details_df["ID заказа"] == order_id]
+
+            for _, detail_row in order_details.iterrows():
+                detail_id = int(detail_row["ID"])
+                detail_name = detail_row["Название детали"]
+                quantity = int(detail_row["Количество"])
+                cut = int(detail_row.get("Порезано", 0))
+                bent = int(detail_row.get("Погнуто", 0))
+
+                # Рассчитываем остаток и прогресс
+                remaining = quantity - cut
+                progress_pct = round((cut / quantity * 100), 1) if quantity > 0 else 0
+
+                total_count += 1
+
+                # Определяем статус
+                if cut >= quantity:
+                    status = 'completed'
+                    completed_count += 1
+                    if not show_completed:
+                        continue
+                elif cut > 0:
+                    status = 'in_progress'
+                    in_progress_count += 1
+                    if not show_in_progress:
+                        continue
+                else:
+                    status = 'not_started'
+                    not_started_count += 1
+                    if not show_not_started:
+                        continue
+
+                # Формируем значения
+                values = (
+                    detail_id,
+                    customer_name,
+                    detail_name,
+                    order_name,
+                    quantity,
+                    cut,
+                    bent,
+                    remaining,
+                    f"{progress_pct}%"
+                )
+
+                # Применяем фильтры
+                if active_filters:
+                    skip_row = False
+
+                    if "Заказчик" in active_filters:
+                        if active_filters["Заказчик"] not in customer_name.lower():
+                            skip_row = True
+
+                    if "Название детали" in active_filters:
+                        if active_filters["Название детали"] not in detail_name.lower():
+                            skip_row = True
+
+                    if "Заказ" in active_filters:
+                        if active_filters["Заказ"] not in order_name.lower():
+                            skip_row = True
+
+                    if skip_row:
+                        continue
+
+                # Цветовая индикация с учётом перепорезки
+                if cut > quantity:
+                    tag = 'over_cut'  # Порезано больше чем нужно
+                else:
+                    tag = status
+
+                self.details_tree.insert("", "end", values=values, tags=(tag,))
+                shown_count += 1
+
+        self.auto_resize_columns(self.details_tree)
+
+        # Обновляем статусную строку
+        if hasattr(self, 'details_status_label'):
+            status_text = (
+                f"📊 Отображено: {shown_count} из {total_count} | "
+                f"🟢 Завершено: {completed_count} | "
+                f"🟡 В процессе: {in_progress_count} | "
+                f"⚪ Не начато: {not_started_count}"
+            )
+
+            self.details_status_label.config(
+                text=status_text,
+                bg='#d4edda',
+                fg='#155724'
+            )
+
+    def export_details(self):
+        """Экспорт учёта деталей в Excel"""
+
+        if not self.details_tree.get_children():
+            messagebox.showwarning("Предупреждение", "Нет данных для экспорта!")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="Сохранить учёт деталей",
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            initialfile=f"details_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        )
+
+        if not file_path:
+            return
+
+        try:
+            # Собираем данные из таблицы
+            data = []
+            for item in self.details_tree.get_children():
+                values = self.details_tree.item(item)['values']
+                data.append(values)
+
+            # Создаём DataFrame
+            columns = ["ID", "Заказчик", "Название детали", "Заказ", "Количество", "Порезано", "Погнуто", "Осталось",
+                       "Прогресс %"]
+            df = pd.DataFrame(data, columns=columns)
+
+            # Сохраняем в Excel
+            df.to_excel(file_path, index=False, engine='openpyxl')
+
+            messagebox.showinfo("Успех", f"Учёт деталей сохранён:\n{file_path}")
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
+
+    def show_details_statistics(self):
+        """Показать детальную статистику по деталям"""
+
+        orders_df = load_data("Orders")
+        order_details_df = load_data("OrderDetails")
+
+        if orders_df.empty or order_details_df.empty:
+            messagebox.showinfo("Статистика", "Нет данных для анализа")
+            return
+
+        # Фильтруем заказы в работе
+        active_orders = orders_df[orders_df["Статус"] == "В работе"]
+
+        if active_orders.empty:
+            messagebox.showinfo("Статистика", "Нет заказов в работе")
+            return
+
+        # Собираем статистику
+        total_details = 0
+        total_qty = 0
+        total_cut = 0
+        total_bent = 0
+
+        completed_details = 0
+        in_progress_details = 0
+        not_started_details = 0
+
+        by_customer = {}
+
+        for _, order_row in active_orders.iterrows():
+            order_id = int(order_row["ID заказа"])
+            customer = order_row["Заказчик"]
+
+            order_details = order_details_df[order_details_df["ID заказа"] == order_id]
+
+            for _, detail_row in order_details.iterrows():
+                qty = int(detail_row["Количество"])
+                cut = int(detail_row.get("Порезано", 0))
+                bent = int(detail_row.get("Погнуто", 0))
+
+                total_details += 1
+                total_qty += qty
+                total_cut += cut
+                total_bent += bent
+
+                # Определяем статус
+                if cut >= qty:
+                    completed_details += 1
+                elif cut > 0:
+                    in_progress_details += 1
+                else:
+                    not_started_details += 1
+
+                # Группируем по заказчику
+                if customer not in by_customer:
+                    by_customer[customer] = {
+                        'details': 0,
+                        'quantity': 0,
+                        'cut': 0,
+                        'bent': 0
+                    }
+
+                by_customer[customer]['details'] += 1
+                by_customer[customer]['quantity'] += qty
+                by_customer[customer]['cut'] += cut
+                by_customer[customer]['bent'] += bent
+
+        # Общий прогресс
+        overall_progress = round((total_cut / total_qty * 100), 1) if total_qty > 0 else 0
+
+        # Формируем сообщение
+        stats_msg = (
+            f"📊 ОБЩАЯ СТАТИСТИКА\n"
+            f"{'=' * 50}\n\n"
+            f"📐 Уникальных деталей: {total_details}\n"
+            f"📦 Всего требуется порезать: {total_qty} шт\n"
+            f"✂️ Порезано: {total_cut} шт ({overall_progress}%)\n"
+            f"🔧 Погнуто: {total_bent} шт\n"
+            f"⏳ Осталось порезать: {total_qty - total_cut} шт\n\n"
+            f"{'=' * 50}\n\n"
+            f"📈 ПО СТАТУСАМ:\n\n"
+            f"🟢 Завершено: {completed_details} деталей\n"
+            f"🟡 В процессе: {in_progress_details} деталей\n"
+            f"⚪ Не начато: {not_started_details} деталей\n\n"
+            f"{'=' * 50}\n\n"
+            f"👥 ПО ЗАКАЗЧИКАМ:\n\n"
+        )
+
+        # Сортируем заказчиков по количеству деталей
+        sorted_customers = sorted(by_customer.items(), key=lambda x: x[1]['quantity'], reverse=True)
+
+        for customer, stats in sorted_customers[:10]:  # Показываем топ-10
+            customer_progress = round((stats['cut'] / stats['quantity'] * 100), 1) if stats['quantity'] > 0 else 0
+            stats_msg += (
+                f"\n{customer}:\n"
+                f"  Деталей: {stats['details']}\n"
+                f"  Требуется: {stats['quantity']} шт\n"
+                f"  Порезано: {stats['cut']} шт ({customer_progress}%)\n"
+                f"  Погнуто: {stats['bent']} шт\n"
+            )
+
+        if len(by_customer) > 10:
+            stats_msg += f"\n... и еще {len(by_customer) - 10} заказчиков"
+
+        # Создаём окно со статистикой
+        stats_window = tk.Toplevel(self.root)
+        stats_window.title("📊 Статистика по деталям")
+        stats_window.geometry("600x700")
+        stats_window.configure(bg='#f0f0f0')
+
+        # Текстовое поле со скроллом
+        text_frame = tk.Frame(stats_window, bg='white')
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        scroll = tk.Scrollbar(text_frame)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, font=("Consolas", 10),
+                              yscrollcommand=scroll.set)
+        text_widget.insert("1.0", stats_msg)
+        text_widget.config(state=tk.DISABLED)
+        text_widget.pack(fill=tk.BOTH, expand=True)
+
+        scroll.config(command=text_widget.yview)
+
+        # Кнопка закрытия
+        tk.Button(stats_window, text="Закрыть", command=stats_window.destroy,
+                  bg='#3498db', fg='white', font=("Arial", 12, "bold"),
+                  width=20, height=2).pack(pady=10)
 
     def import_laser_writeoff_table(self):
         """Импорт таблицы от лазерщиков"""
@@ -4391,19 +4859,21 @@ class ProductionApp:
 
             print(f"✅ Данные сохранены")
 
-            # ========== ОБНОВЛЕНИЕ ИНТЕРФЕЙСА ==========
-            print(f"\n🔄 Обновление интерфейса...")
+            # ОБНОВЛЕНИЕ ИНТЕРФЕЙСА
             self.refresh_laser_import_table()
             self.refresh_materials()
             self.refresh_reservations()
             self.refresh_writeoffs()
             self.refresh_balance()
 
-            # 🆕 ОБНОВЛЯЕМ ВКЛАДКУ ЗАКАЗОВ
             if hasattr(self, 'refresh_orders'):
                 self.refresh_orders()
             if hasattr(self, 'refresh_order_details'):
                 self.refresh_order_details()
+
+            # 🆕 ОБНОВЛЯЕМ ВКЛАДКУ УЧЁТА ДЕТАЛЕЙ
+            if hasattr(self, 'refresh_details'):
+                self.refresh_details()
 
 
             print(f"✅ Интерфейс обновлен")
