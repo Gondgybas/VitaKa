@@ -4,10 +4,12 @@ from tkinter import ttk, messagebox, filedialog
 import pandas as pd
 from openpyxl import Workbook, load_workbook
 from datetime import datetime, timedelta
+from pathlib import Path
 import os
 import json
 
 DATABASE_FILE = "production_database.xlsx"
+DATA_PATH = Path(__file__).parent  # Папка где лежит скрипт
 
 
 def initialize_database():
@@ -317,8 +319,19 @@ class ProductionApp:
             pass
 
     def on_closing(self):
-        """Обработчик закрытия окна"""
+        """Обработчик закрытия приложения"""
+        # 🆕 АВТОСОХРАНЕНИЕ ТАБЛИЦЫ ИМПОРТА
+        print("\n💾 Сохранение данных перед закрытием...")
+
+        if hasattr(self, 'laser_table_data') and self.laser_table_data:
+            self.save_laser_import_cache()
+
+        # Сохраняем настройки переключателей
         self.save_toggle_settings()
+
+        print("✅ Данные сохранены")
+
+        # Закрываем приложение
         self.root.destroy()
 
     def setup_materials_tab(self):
@@ -2952,6 +2965,9 @@ class ProductionApp:
                     # Обновляем визуа��ьное отображение
                     if hasattr(self, 'laser_import_tree'):
                         self.refresh_laser_import_table()
+
+                        # 🆕 АВТОСОХРАНЕНИЕ ПОСЛЕ ОБНОВЛЕНИЯ
+                        self.save_laser_import_cache()
                 else:
                     print(f"   ⚠️ Соответствующие строки в таблице импорта не найдены")
 
@@ -3556,7 +3572,10 @@ class ProductionApp:
         )
         self.laser_status_label.pack(fill=tk.X, side=tk.BOTTOM, padx=20, pady=10)
 
-        print("✅ setup_laser_import_tab() выполнен успешно")  # DEBUG
+        print("✅ setup_laser_import_tab() выполнен успешно")
+
+        # 🆕 АВТОЗАГРУЗКА КЭША ПРИ СТАРТЕ
+        self.load_laser_import_cache()
 
     def setup_details_tab(self):
         """Вкладка учёта деталей"""
@@ -4311,8 +4330,7 @@ class ProductionApp:
                 laser_df = pd.read_excel(file_path, engine='openpyxl')
 
             # Проверка обязательных колонок
-            required = ["Дата (МСК)", "Время (МСК)", "username", "order", "metal", "metal_quantity", "part",
-                        "part_quantity"]
+            required = ["Дата (МСК)", "Время (МСК)", "username", "order", "metal", "metal_quantity", "part", "part_quantity"]
             missing = [col for col in required if col not in laser_df.columns]
 
             if missing:
@@ -4325,8 +4343,7 @@ class ProductionApp:
             if "Дата списания" not in laser_df.columns:
                 laser_df["Дата списания"] = ""
 
-            # 🆕 СОЗДАЁМ УНИКАЛЬНЫЙ КЛЮЧ ДЛЯ КАЖДОЙ СТРОКИ
-            # Используем комбинацию: дата + время + заказ + металл + деталь
+            # Создаём уникальный ключ для каждой строки
             def create_row_key(row):
                 """Создание уникального ключа для строки"""
                 return (
@@ -4340,7 +4357,7 @@ class ProductionApp:
                     str(row.get("part_quantity", ""))
                 )
 
-            # 🆕 СОЗДАЁМ СЛОВАРЬ СУЩЕСТВУЮЩИХ СТРОК С ИХ СТАТУСАМИ
+            # Создаём словарь существующих строк с их статусами
             existing_rows = {}
             if hasattr(self, 'laser_table_data') and self.laser_table_data:
                 for row_data in self.laser_table_data:
@@ -4350,10 +4367,9 @@ class ProductionApp:
                         "Дата списания": row_data.get("Дата списания", "")
                     }
 
-            # 🆕 ОБРАБАТЫВАЕМ НОВЫЙ ФАЙЛ
+            # Обрабатываем новый файл
             new_rows = []
             updated_rows = 0
-            duplicate_rows = 0
 
             for _, row in laser_df.iterrows():
                 row_dict = row.to_dict()
@@ -4374,7 +4390,7 @@ class ProductionApp:
 
                 new_rows.append(row_dict)
 
-            # 🆕 ОБЪЕДИНЯЕМ: СНАЧАЛА СТАРЫЕ (С СОХРАНЕННЫМИ СТАТУСАМИ), ПОТОМ НОВЫЕ
+            # Объединяем данные
             merged_data = []
             new_count = 0
 
@@ -4388,15 +4404,12 @@ class ProductionApp:
                 for old_row in self.laser_table_data:
                     old_key = create_row_key(old_row)
                     if old_key in new_keys:
-                        # Строка есть в новом файле - берём из старой таблицы (с сохраненным статусом)
+                        # Строка есть в новом файле - берём из старой таблицы
                         merged_data.append(old_row)
-                    # Если строки нет в новом файле - не добавляем (она удалена из источника)
 
             # Добавляем только НОВЫЕ строки из импортированного файла
             for new_row in new_rows:
                 new_key = create_row_key(new_row)
-
-                # Проверяем, была ли эта строка в старых данных
                 is_new = new_key not in existing_rows
 
                 if is_new:
@@ -4448,6 +4461,9 @@ class ProductionApp:
                 )
 
             messagebox.showinfo("Успех", result_msg)
+
+            # Автосохранение после импорта
+            self.save_laser_import_cache()
 
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось импортировать:\n{e}")
@@ -4893,6 +4909,9 @@ class ProductionApp:
 
             messagebox.showinfo("Результат списания", result_msg)
 
+            # 🆕 АВТОСОХРАНЕНИЕ ПОСЛЕ СПИСАНИЯ
+            self.save_laser_import_cache()
+
         except Exception as e:
             print(f"\n💥 КРИТИЧЕСКАЯ ОШИБКА: {e}")
             import traceback
@@ -5094,6 +5113,9 @@ class ProductionApp:
         self.refresh_laser_import_table()
         messagebox.showinfo("Успех", f"Удалено записей: {len(indices_to_delete)}")
 
+        # 🆕 АВТОСОХРАНЕНИЕ ПОСЛЕ УДАЛЕНИЯ
+        self.save_laser_import_cache()
+
     def export_laser_table(self):
         """Экспорт таблицы обратно в Excel"""
         if not self.laser_table_data:
@@ -5122,7 +5144,110 @@ class ProductionApp:
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
 
-    # ==================== КОНЕЦ МЕТОДОВ ДЛЯ ИМПОРТА ОТ ЛАЗЕРЩИКОВ ====================
+    def export_laser_table(self):
+        """Экспорт таблицы обратно в Excel"""
+        if not self.laser_table_data:
+            messagebox.showwarning("Предупреждение", "Нет данных для экспорта!")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="Сохранить таблицу",
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile=f"laser_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        )
+
+        if not file_path:
+            return
+
+        try:
+            df = pd.DataFrame(self.laser_table_data)
+
+            if file_path.endswith('.csv'):
+                df.to_csv(file_path, index=False, sep=';', encoding='utf-8')
+            else:
+                df.to_excel(file_path, index=False, engine='openpyxl')
+
+            messagebox.showinfo("Успех", f"Таблица сохранена:\n{file_path}")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
+
+    # 🆕 НОВЫЙ МЕТОД - СОХРАНЕНИЕ КЭША
+    def save_laser_import_cache(self):
+        """Автоматическое сохранение таблицы импорта в кэш-файл"""
+        if not hasattr(self, 'laser_table_data') or not self.laser_table_data:
+            return
+
+        try:
+            cache_file = DATA_PATH / "laser_import_cache.xlsx"
+
+            # Преобразуем в DataFrame
+            df = pd.DataFrame(self.laser_table_data)
+
+            # Сохраняем в Excel
+            df.to_excel(cache_file, index=False, engine='openpyxl')
+
+            print(f"✅ Кэш импорта сохранён: {len(self.laser_table_data)} записей")
+
+        except Exception as e:
+            print(f"⚠️ Ошибка сохранения кэша: {e}")
+
+    # 🆕 НОВЫЙ МЕТОД - ЗАГРУЗКА КЭША
+    def load_laser_import_cache(self):
+        """Автоматическая загрузка таблицы импорта из кэш-файла"""
+        try:
+            cache_file = DATA_PATH / "laser_import_cache.xlsx"
+
+            if not cache_file.exists():
+                print("ℹ️ Кэш импорта не найден (первый запуск)")
+                return
+
+            # Загружаем из Excel
+            df = pd.read_excel(cache_file, engine='openpyxl')
+
+            if df.empty:
+                print("ℹ️ Кэш импорта пуст")
+                return
+
+            # Проверяем наличие необходимых колонок
+            required = ["Дата (МСК)", "Время (МСК)", "username", "order", "metal", "metal_quantity", "part",
+                        "part_quantity"]
+
+            if all(col in df.columns for col in required):
+                # Преобразуем в список словарей
+                self.laser_table_data = df.to_dict('records')
+
+                print(f"✅ Загружен кэш импорта: {len(self.laser_table_data)} записей")
+
+                # Обновляем таблицу
+                if hasattr(self, 'laser_import_tree'):
+                    self.refresh_laser_import_table()
+
+                    # Обновляем статус
+                    if hasattr(self, 'laser_status_label'):
+                        items_count = len(self.laser_import_tree.get_children())
+
+                        # Считаем статистику
+                        auto_count = sum(1 for r in self.laser_table_data if r.get("Списано") in ["✓", "Да", "Yes"])
+                        manual_count = sum(1 for r in self.laser_table_data if r.get("Списано") == "Вручную")
+                        pending_count = sum(1 for r in self.laser_table_data if not r.get("Списано"))
+
+                        status_text = (
+                            f"📂 Загружено из кэша: {items_count} | "
+                            f"✅ Списано: {auto_count} | "
+                            f"🟡 Ожидает: {pending_count}"
+                        )
+
+                        self.laser_status_label.config(
+                            text=status_text,
+                            bg='#d1ecf1',
+                            fg='#0c5460'
+                        )
+            else:
+                print("⚠️ Кэш импорта имеет неправильную структуру")
+
+        except Exception as e:
+            print(f"⚠️ Ошибка загрузки кэша: {e}")
 
     def setup_balance_tab(self):
         """Вкладка баланса материалов"""
