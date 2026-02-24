@@ -3453,6 +3453,13 @@ class ProductionApp:
 
         tk.Button(buttons_frame, text="✅ Списать выбранные", bg='#27ae60', fg='white',
                   command=self.writeoff_laser_row, **btn_style).pack(side=tk.LEFT, padx=5)
+        # 🆕 НОВАЯ КНОПКА
+        tk.Button(buttons_frame, text="🔵 Пометить вручную", bg='#2196F3', fg='white',
+                  command=self.mark_manual_writeoff, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        # 🆕 КНОПКА СНЯТИЯ ПОМЕТКИ
+        tk.Button(buttons_frame, text="↩️ Снять пометку", bg='#9E9E9E', fg='white',
+                  command=self.unmark_manual_writeoff, **btn_style).pack(side=tk.LEFT, padx=5)
 
         tk.Button(buttons_frame, text="🗑️ Удалить строки", bg='#e74c3c', fg='white',
                   command=self.delete_laser_row, **btn_style).pack(side=tk.LEFT, padx=5)
@@ -3515,6 +3522,7 @@ class ProductionApp:
 
         # Цветовая индикация
         self.laser_import_tree.tag_configure('written_off', background='#c8e6c9', foreground='#1b5e20')
+        self.laser_import_tree.tag_configure('manual', background='#bbdefb', foreground='#0d47a1')  # Светло-синий
         self.laser_import_tree.tag_configure('pending', background='#fff9c4', foreground='#000000')
         self.laser_import_tree.tag_configure('error', background='#ffcccc', foreground='#b71c1c')
 
@@ -3594,10 +3602,12 @@ class ProductionApp:
             values = (date_val, time_val, username, order, metal, metal_qty, part, part_qty, written_off, writeoff_date)
 
             # Определяем тег для цветовой индикации
-            if written_off == "Да" or written_off == "✓":
-                tag = 'written_off'
+            if written_off == "Вручную":
+                tag = 'manual'  # Светло-синий
+            elif written_off in ["Да", "✓", "Yes"]:
+                tag = 'written_off'  # Зелёный
             else:
-                tag = 'pending'
+                tag = 'pending'  # Жёлтый
 
             self.laser_import_tree.insert("", "end", values=values, tags=(tag,))
 
@@ -4376,6 +4386,131 @@ class ProductionApp:
             traceback.print_exc()
             messagebox.showerror("Ошибка", f"Не удалось выполнить списание:\n{e}")
 
+    def mark_manual_writeoff(self):
+        """Пометка строк как 'списано вручную' без фактического списания"""
+        selected_items = self.laser_import_tree.selection()
+
+        if not selected_items:
+            messagebox.showwarning("Предупреждение", "Выберите строки для пометки!")
+            return
+
+        # Проверяем, что строки еще не списаны
+        rows_to_mark = []
+        already_marked = []
+
+        for item in selected_items:
+            values = self.laser_import_tree.item(item)['values']
+            status = values[8]  # Колонка "Списано"
+
+            if status in ["✓", "Да", "Yes"]:
+                already_marked.append(f"{values[3]} (автоматически)")
+            elif status == "Вручную":
+                already_marked.append(f"{values[3]} (уже помечено вручную)")
+            else:
+                rows_to_mark.append((item, values))
+
+        if already_marked:
+            messagebox.showinfo("Информация",
+                                f"Некоторые строки уже обработаны:\n" + "\n".join(already_marked[:5]))
+
+        if not rows_to_mark:
+            messagebox.showwarning("Предупреждение", "Нет строк для пометки!")
+            return
+
+        # Подтверждение
+        confirm_msg = (
+            f"Пометить {len(rows_to_mark)} строк(и) как 'списано вручную'?\n\n"
+            f"⚠️ Это НЕ спишет материал с резервов!\n"
+            f"Это только пометит строки для последующего ручного списания.\n\n"
+            f"Строки окрасятся в светло-синий цвет."
+        )
+
+        if not messagebox.askyesno("Подтверждение", confirm_msg):
+            return
+
+        try:
+            marked_count = 0
+
+            for item, values in rows_to_mark:
+                # Обновляем статус в таблице данных
+                item_index = self.laser_import_tree.index(item)
+
+                if item_index < len(self.laser_table_data):
+                    self.laser_table_data[item_index]["Списано"] = "Вручную"
+                    self.laser_table_data[item_index]["Дата списания"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+                    # Обновляем визуальное отображение
+                    new_values = list(values)
+                    new_values[8] = "Вручную"  # Колонка "Списано"
+                    new_values[9] = datetime.now().strftime("%Y-%m-%d %H:%M")  # Колонка "Дата списания"
+
+                    self.laser_import_tree.item(item, values=new_values, tags=('manual',))
+                    marked_count += 1
+
+            messagebox.showinfo("Успех",
+                                f"✅ Помечено строк: {marked_count}\n\n"
+                                f"🔵 Строки окрашены в светло-синий цвет\n"
+                                f"📝 Не забудьте списать материал вручную!")
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось пометить строки:\n{e}")
+            import traceback
+            traceback.print_exc()
+
+    def unmark_manual_writeoff(self):
+        """Снятие пометки 'списано вручную'"""
+        selected_items = self.laser_import_tree.selection()
+
+        if not selected_items:
+            messagebox.showwarning("Предупреждение", "Выберите строки для снятия пометки!")
+            return
+
+        # Проверяем, что строки помечены вручную
+        rows_to_unmark = []
+
+        for item in selected_items:
+            values = self.laser_import_tree.item(item)['values']
+            status = values[8]  # Колонка "Списано"
+
+            if status == "Вручную":
+                rows_to_unmark.append((item, values))
+
+        if not rows_to_unmark:
+            messagebox.showwarning("Предупреждение",
+                                   "Выбранные строки не помечены вручную!\n\n"
+                                   "Снять можно только пометку 'Вручную'.\n"
+                                   "Автоматические списания удаляются через вкладку 'Списание материалов'.")
+            return
+
+        # Подтверждение
+        if not messagebox.askyesno("Подтверждение",
+                                   f"Снять пометку с {len(rows_to_unmark)} строк(и)?"):
+            return
+
+        try:
+            unmarked_count = 0
+
+            for item, values in rows_to_unmark:
+                # Обновляем статус в таблице данных
+                item_index = self.laser_import_tree.index(item)
+
+                if item_index < len(self.laser_table_data):
+                    self.laser_table_data[item_index]["Списано"] = ""
+                    self.laser_table_data[item_index]["Дата списания"] = ""
+
+                    # Обновляем визуальное отображение
+                    new_values = list(values)
+                    new_values[8] = ""  # Колонка "Списано"
+                    new_values[9] = ""  # Колонка "Дата списания"
+
+                    self.laser_import_tree.item(item, values=new_values, tags=('pending',))
+                    unmarked_count += 1
+
+            messagebox.showinfo("Успех", f"✅ Снято пометок: {unmarked_count}")
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось снять пометку:\n{e}")
+
     def edit_laser_row(self):
         """Редактирование выбранной строки импорта"""
         selected = self.laser_import_tree.selection()
@@ -4455,7 +4590,7 @@ class ProductionApp:
         file_path = filedialog.asksaveasfilename(
             title="Сохранить таблицу",
             defaultextension=".xlsx",
-            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            filetypes=[("Excel files", "*.xlsx"), ("CSV files", "*.csv"), ("All files", "*.*")],
             initialfile=f"laser_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         )
 
@@ -4464,7 +4599,12 @@ class ProductionApp:
 
         try:
             df = pd.DataFrame(self.laser_table_data)
-            df.to_excel(file_path, index=False, engine='openpyxl')
+
+            if file_path.endswith('.csv'):
+                df.to_csv(file_path, index=False, sep=';', encoding='utf-8')
+            else:
+                df.to_excel(file_path, index=False, engine='openpyxl')
+
             messagebox.showinfo("Успех", f"Таблица сохранена:\n{file_path}")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
