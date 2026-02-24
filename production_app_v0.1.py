@@ -3823,7 +3823,7 @@ class ProductionApp:
     # ==================== МЕТОДЫ ДЛЯ ВКЛАДКИ ИМПОРТА ОТ ЛАЗЕРЩИКОВ ====================
 
     def import_laser_table(self):
-        """Импорт таблицы от лазерщиков"""
+        """Импорт таблицы от лазерщиков с сохранением статусов существующих записей"""
         file_path = filedialog.askopenfilename(
             title="Выберите файл от лазерщиков",
             filetypes=[("CSV files", "*.csv"), ("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
@@ -3833,24 +3833,14 @@ class ProductionApp:
             return
 
         try:
-            print(f"\n{'=' * 60}")
-            print(f"🔵 НАЧАЛО ИМПОРТА: {file_path}")
-            print(f"{'=' * 60}")
-
             # Загрузка файла
             if file_path.endswith('.csv'):
                 try:
                     laser_df = pd.read_csv(file_path, sep=';', encoding='utf-8')
-                    print(f"✅ CSV загружен (sep=';', utf-8)")
                 except:
                     laser_df = pd.read_csv(file_path, sep=';', encoding='cp1251')
-                    print(f"✅ CSV загружен (sep=';', cp1251)")
             else:
                 laser_df = pd.read_excel(file_path, engine='openpyxl')
-                print(f"✅ Excel загружен")
-
-            print(f"📊 Всего строк в файле: {len(laser_df)}")
-            print(f"📋 Колонки: {list(laser_df.columns)}")
 
             # Проверка обязательных колонок
             required = ["Дата (МСК)", "Время (МСК)", "username", "order", "metal", "metal_quantity", "part",
@@ -3858,62 +3848,100 @@ class ProductionApp:
             missing = [col for col in required if col not in laser_df.columns]
 
             if missing:
-                error_msg = f"Отсутствуют колонки:\n{', '.join(missing)}"
-                print(f"❌ {error_msg}")
-                messagebox.showerror("Ошибка", error_msg)
+                messagebox.showerror("Ошибка", f"Отсутствуют колонки:\n{', '.join(missing)}")
                 return
 
-            # Добавляем колонки статуса
+            # Добавляем колонки статуса если их нет
             if "Списано" not in laser_df.columns:
                 laser_df["Списано"] = ""
             if "Дата списания" not in laser_df.columns:
                 laser_df["Дата списания"] = ""
 
-            # Сохраняем данные
-            self.laser_table_data = laser_df.to_dict('records')
-            print(f"💾 Сохранено в self.laser_table_data: {len(self.laser_table_data)} записей")
+            # 🆕 СОЗДАЁМ УНИКАЛЬНЫЙ КЛЮЧ ДЛЯ КАЖДОЙ СТРОКИ
+            # Используем комбинацию: дата + время + заказ + металл + деталь
+            def create_row_key(row):
+                """Создание уникального ключа для строки"""
+                return (
+                    str(row.get("Дата (МСК)", "")),
+                    str(row.get("Время (МСК)", "")),
+                    str(row.get("username", "")),
+                    str(row.get("order", "")),
+                    str(row.get("metal", "")),
+                    str(row.get("metal_quantity", "")),
+                    str(row.get("part", "")),
+                    str(row.get("part_quantity", ""))
+                )
 
-            # 🆕 ОЧИЩАЕМ ТАБЛИЦУ
-            print(f"🗑️ Очистка таблицы...")
-            for item in self.laser_import_tree.get_children():
-                self.laser_import_tree.delete(item)
-            print(f"✅ Таблица очищена")
+            # 🆕 СОЗДАЁМ СЛОВАРЬ СУЩЕСТВУЮЩИХ СТРОК С ИХ СТАТУСАМИ
+            existing_rows = {}
+            if hasattr(self, 'laser_table_data') and self.laser_table_data:
+                for row_data in self.laser_table_data:
+                    key = create_row_key(row_data)
+                    existing_rows[key] = {
+                        "Списано": row_data.get("Списано", ""),
+                        "Дата списания": row_data.get("Дата списания", "")
+                    }
 
-            # 🆕 ЗАПОЛНЯЕМ ТАБЛИЦУ
-            print(f"➕ Начало заполнения таблицы...")
-            added = 0
+            # 🆕 ОБРАБАТЫВАЕМ НОВЫЙ ФАЙЛ
+            new_rows = []
+            updated_rows = 0
+            duplicate_rows = 0
 
-            for idx, row_data in enumerate(self.laser_table_data):
-                date_val = str(row_data.get("Дата (МСК)", ""))
-                time_val = str(row_data.get("Время (МСК)", ""))
-                username = str(row_data.get("username", ""))
-                order = str(row_data.get("order", ""))
-                metal = str(row_data.get("metal", ""))
-                metal_qty = str(row_data.get("metal_quantity", ""))
-                part = str(row_data.get("part", ""))
-                part_qty = str(row_data.get("part_quantity", ""))
-                written_off = str(row_data.get("Списано", ""))
-                writeoff_date = str(row_data.get("Дата списания", ""))
+            for _, row in laser_df.iterrows():
+                row_dict = row.to_dict()
+                key = create_row_key(row_dict)
 
-                values = (date_val, time_val, username, order, metal, metal_qty, part, part_qty, written_off,
-                          writeoff_date)
+                # Проверяем, существует ли уже эта строка
+                if key in existing_rows:
+                    # Строка уже есть - сохраняем её статус
+                    row_dict["Списано"] = existing_rows[key]["Списано"]
+                    row_dict["Дата списания"] = existing_rows[key]["Дата списания"]
+                    updated_rows += 1
+                else:
+                    # Новая строка - оставляем пустой статус
+                    if not row_dict.get("Списано"):
+                        row_dict["Списано"] = ""
+                    if not row_dict.get("Дата списания"):
+                        row_dict["Дата списания"] = ""
 
-                tag = 'written_off' if written_off in ["Да", "✓", "Yes"] else 'pending'
+                new_rows.append(row_dict)
 
-                item_id = self.laser_import_tree.insert("", "end", values=values, tags=(tag,))
-                added += 1
+            # 🆕 ОБЪЕДИНЯЕМ: СНАЧАЛА СТАРЫЕ (С СОХРАНЕННЫМИ СТАТУСАМИ), ПОТОМ НОВЫЕ
+            merged_data = []
+            new_count = 0
 
-                # Показываем первые 3 строки
-                if idx < 3:
-                    print(f"  ✓ Строка {idx + 1}: {order[:40]}... [{tag}]")
+            # Создаём множество ключей из нового файла
+            new_keys = set()
+            for row_dict in new_rows:
+                new_keys.add(create_row_key(row_dict))
 
-            print(f"✅ Добавлено в таблицу: {added} строк")
+            # Добавляем старые строки, если они есть в новом файле
+            if hasattr(self, 'laser_table_data') and self.laser_table_data:
+                for old_row in self.laser_table_data:
+                    old_key = create_row_key(old_row)
+                    if old_key in new_keys:
+                        # Строка есть в новом файле - берём из старой таблицы (с сохраненным статусом)
+                        merged_data.append(old_row)
+                    # Если строки нет в новом файле - не добавляем (она удалена из источника)
 
-            # 🆕 ПРОВЕРКА СОДЕРЖИМОГО TREEVIEW
-            items_in_tree = len(self.laser_import_tree.get_children())
-            print(f"🔍 Проверка: элементов в Treeview = {items_in_tree}")
+            # Добавляем только НОВЫЕ строки из импортированного файла
+            for new_row in new_rows:
+                new_key = create_row_key(new_row)
 
-            # 🆕 ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ ИНТЕРФЕЙСА
+                # Проверяем, была ли эта строка в старых данных
+                is_new = new_key not in existing_rows
+
+                if is_new:
+                    merged_data.append(new_row)
+                    new_count += 1
+
+            # Сохраняем объединённые данные
+            self.laser_table_data = merged_data
+
+            # Обновляем таблицу
+            self.refresh_laser_import_table()
+
+            # Принудительное обновление
             self.laser_import_tree.update_idletasks()
             self.laser_import_frame.update()
 
@@ -3921,27 +3949,42 @@ class ProductionApp:
             self.auto_resize_columns(self.laser_import_tree)
 
             # Обновляем статус
+            items_count = len(self.laser_import_tree.get_children())
+
             if hasattr(self, 'laser_status_label'):
                 self.laser_status_label.config(
-                    text=f"✅ Импортировано: {len(self.laser_table_data)} записей | Отображено: {items_in_tree} строк",
+                    text=f"✅ Всего записей: {items_count} | 🆕 Новых: {new_count} | 🔄 Обновлено статусов: {updated_rows}",
                     bg='#d4edda',
                     fg='#155724'
                 )
 
-            print(f"{'=' * 60}")
-            print(f"✅ ИМПОРТ ЗАВЕРШЕН УСПЕШНО")
-            print(f"{'=' * 60}\n")
+            # Формируем сообщение
+            result_msg = (
+                f"✅ Импорт завершён!\n\n"
+                f"📊 Всего записей: {items_count}\n"
+                f"🆕 Новых записей: {new_count}\n"
+                f"🔄 Сохранено статусов: {updated_rows}\n\n"
+            )
 
-            messagebox.showinfo("Успех",
-                                f"✅ Импортировано: {len(self.laser_table_data)} записей\n"
-                                f"📊 Отображено в таблице: {items_in_tree} строк\n\n"
-                                f"Выберите строки и нажмите 'Списать выбранные'")
+            # Считаем статистику по статусам
+            if self.laser_table_data:
+                auto_count = sum(1 for r in self.laser_table_data if r.get("Списано") in ["✓", "Да", "Yes"])
+                manual_count = sum(1 for r in self.laser_table_data if r.get("Списано") == "Вручную")
+                pending_count = sum(1 for r in self.laser_table_data if not r.get("Списано"))
+
+                result_msg += (
+                    f"📈 Статистика:\n"
+                    f"  • ✅ Автоматически списано: {auto_count}\n"
+                    f"  • 🔵 Помечено вручную: {manual_count}\n"
+                    f"  • 🟡 Ожидает обработки: {pending_count}"
+                )
+
+            messagebox.showinfo("Успех", result_msg)
 
         except Exception as e:
-            print(f"💥 КРИТИЧЕСКАЯ ОШИБКА: {e}")
+            messagebox.showerror("Ошибка", f"Не удалось импортировать:\n{e}")
             import traceback
             traceback.print_exc()
-            messagebox.showerror("Ошибка", f"Не удалось импортировать:\n{e}")
 
 
 
