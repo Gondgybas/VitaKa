@@ -3460,10 +3460,6 @@ class ProductionApp:
         tk.Button(buttons_frame, text="💾 Экспорт таблицы", bg='#9b59b6', fg='white',
                   command=self.export_laser_table, **btn_style).pack(side=tk.LEFT, padx=5)
 
-        # После кнопок управления добавьте:
-        tk.Button(buttons_frame, text="🔍 ТЕСТ: Добавить 3 строки", bg='#f39c12', fg='white',
-                  command=self.test_add_rows, **btn_style).pack(side=tk.LEFT, padx=5)
-
         # Метка таблицы
         table_label = tk.Label(self.laser_import_frame,
                                text="📊 Импортированные данные (выберите строки для списания)",
