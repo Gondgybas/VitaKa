@@ -3927,13 +3927,17 @@ class ProductionApp:
         for item in self.laser_import_tree.get_children():
             self.laser_import_tree.delete(item)
 
-        # 🆕 ЗАЩИТА ОТ ОШИБКИ
         if not hasattr(self, 'laser_table_data') or self.laser_table_data is None:
             self.laser_table_data = []
             return
 
+        # 🆕 СЧЁТЧИКИ ДЛЯ ДИАГНОСТИКИ
+        manual_count = 0
+        auto_count = 0
+        pending_count = 0
+
         # Заполняем таблицу
-        for row_data in self.laser_table_data:
+        for idx, row_data in enumerate(self.laser_table_data):
             date_val = row_data.get("Дата (МСК)", "")
             time_val = row_data.get("Время (МСК)", "")
             username = row_data.get("username", "")
@@ -3945,17 +3949,31 @@ class ProductionApp:
             written_off = row_data.get("Списано", "")
             writeoff_date = row_data.get("Дата списания", "")
 
+            # 🆕 БЕЗОПАСНОЕ ПРЕОБРАЗОВАНИЕ written_off В СТРОКУ
+            if pd.isna(written_off) or written_off is None:
+                written_off = ""
+            else:
+                written_off = str(written_off).strip()
+
             values = (date_val, time_val, username, order, metal, metal_qty, part, part_qty, written_off, writeoff_date)
 
-            # Определяем тег для цветовой индикации
+            # 🆕 ПРАВИЛЬНОЕ ОПРЕДЕЛЕНИЕ ЦВЕТА С ДИАГНОСТИКОЙ
             if written_off == "Вручную":
-                tag = 'manual'  # Светло-синий
+                tag = 'manual'  # Светло-синий для ручных пометок
+                manual_count += 1
+                if idx < 3:  # Выводим первые 3 для проверки
+                    print(f"   🔵 Строка {idx + 1}: '{written_off}' → тег 'manual' (синий)")
             elif written_off in ["Да", "✓", "Yes"]:
-                tag = 'written_off'  # Зелёный
+                tag = 'written_off'  # Зелёный для автоматических списаний
+                auto_count += 1
             else:
-                tag = 'pending'  # Жёлтый
+                tag = 'pending'  # Жёлтый для ожидающих
+                pending_count += 1
 
             self.laser_import_tree.insert("", "end", values=values, tags=(tag,))
+
+        # 🆕 ИТОГОВАЯ ДИАГНОСТИКА
+        print(f"\n📊 Итого цветов: 🔵 Синих={manual_count}, 🟢 Зелёных={auto_count}, 🟡 Жёлтых={pending_count}")
 
         self.auto_resize_columns(self.laser_import_tree)
 
@@ -4329,16 +4347,16 @@ class ProductionApp:
             import traceback
             traceback.print_exc()
 
-
-
     def refresh_laser_import_table(self):
         """Обновление таблицы импорта от лазерщиков"""
-        # Очищаем таблицу
         for item in self.laser_import_tree.get_children():
             self.laser_import_tree.delete(item)
 
-        # Заполняем таблицу
-        for row_data in self.laser_table_data:
+        if not hasattr(self, 'laser_table_data') or self.laser_table_data is None:
+            self.laser_table_data = []
+            return
+
+        for idx, row_data in enumerate(self.laser_table_data):
             date_val = row_data.get("Дата (МСК)", "")
             time_val = row_data.get("Время (МСК)", "")
             username = row_data.get("username", "")
@@ -4350,10 +4368,16 @@ class ProductionApp:
             written_off = row_data.get("Списано", "")
             writeoff_date = row_data.get("Дата списания", "")
 
+            if pd.isna(written_off) or written_off is None:
+                written_off = ""
+            else:
+                written_off = str(written_off).strip()
+
             values = (date_val, time_val, username, order, metal, metal_qty, part, part_qty, written_off, writeoff_date)
 
-            # Определяем тег для цветовой индикации
-            if written_off == "Да" or written_off == "✓":
+            if written_off == "Вручную":
+                tag = 'manual'
+            elif written_off in ["Да", "✓", "Yes"]:
                 tag = 'written_off'
             else:
                 tag = 'pending'
@@ -5055,10 +5079,12 @@ class ProductionApp:
     def load_laser_import_cache(self):
         """Автоматическая загрузка таблицы импорта из кэш-файла"""
         try:
-            cache_file = DATA_PATH / "laser_import_cache.xlsx"
+            # Используем текущую директорию скрипта
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            cache_file = os.path.join(script_dir, "laser_import_cache.xlsx")
 
-            if not cache_file.exists():
-                print("ℹ️ Кэш импорта не найден (первый запуск)")
+            if not os.path.exists(cache_file):
+                print(f"ℹ️ Кэш импорта не найден: {cache_file}")
                 return
 
             # Загружаем из Excel
@@ -5073,10 +5099,36 @@ class ProductionApp:
                         "part_quantity"]
 
             if all(col in df.columns for col in required):
+                # 🆕 ВАЖНО: Преобразуем NaN в пустые строки перед конвертацией
+                df = df.fillna("")
+
                 # Преобразуем в список словарей
                 self.laser_table_data = df.to_dict('records')
 
-                print(f"✅ Загружен кэш импорта: {len(self.laser_table_data)} записей")
+                # 🆕 ДОПОЛНИТЕЛЬНАЯ ОЧИСТКА: убедимся что все значения - строки или числа
+                for row in self.laser_table_data:
+                    # Преобразуем "Списано" в строку
+                    if "Списано" in row:
+                        if pd.isna(row["Списано"]) or row["Списано"] is None:
+                            row["Списано"] = ""
+                        else:
+                            row["Списано"] = str(row["Списано"]).strip()
+
+                    # Преобразуем "Дата списания" в строку
+                    if "Дата списания" in row:
+                        if pd.isna(row["Дата списания"]) or row["Дата списания"] is None:
+                            row["Дата списания"] = ""
+                        else:
+                            row["Дата списания"] = str(row["Дата списания"]).strip()
+
+                print(f"✅ Загружен кэш импорта: {len(self.laser_table_data)} записей из {cache_file}")
+
+                # 🆕 ДИАГНОСТИКА: выведем первые строки для проверки
+                if self.laser_table_data:
+                    print("\n🔍 Проверка загруженных данных:")
+                    for i, row in enumerate(self.laser_table_data[:3]):
+                        status = row.get("Списано", "")
+                        print(f"   Строка {i + 1}: Списано = '{status}' (тип: {type(status).__name__})")
 
                 # Обновляем таблицу
                 if hasattr(self, 'laser_import_tree'):
@@ -5087,13 +5139,16 @@ class ProductionApp:
                         items_count = len(self.laser_import_tree.get_children())
 
                         # Считаем статистику
-                        auto_count = sum(1 for r in self.laser_table_data if r.get("Списано") in ["✓", "Да", "Yes"])
-                        manual_count = sum(1 for r in self.laser_table_data if r.get("Списано") == "Вручную")
-                        pending_count = sum(1 for r in self.laser_table_data if not r.get("Списано"))
+                        auto_count = sum(
+                            1 for r in self.laser_table_data if r.get("Списано", "").strip() in ["✓", "Да", "Yes"])
+                        manual_count = sum(
+                            1 for r in self.laser_table_data if r.get("Списано", "").strip() == "Вручную")
+                        pending_count = sum(1 for r in self.laser_table_data if not r.get("Списано", "").strip())
 
                         status_text = (
                             f"📂 Загружено из кэша: {items_count} | "
                             f"✅ Списано: {auto_count} | "
+                            f"🔵 Вручную: {manual_count} | "
                             f"🟡 Ожидает: {pending_count}"
                         )
 
@@ -5107,6 +5162,8 @@ class ProductionApp:
 
         except Exception as e:
             print(f"⚠️ Ошибка загрузки кэша: {e}")
+            import traceback
+            traceback.print_exc()
 
     def setup_balance_tab(self):
         """Вкладка баланса материалов"""
