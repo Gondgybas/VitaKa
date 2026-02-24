@@ -2830,19 +2830,16 @@ class ProductionApp:
             messagebox.showwarning("Предупреждение", "Выберите списание для удаления!")
             return
 
-        # Получаем информацию о выбранном списании
         try:
             values = self.writeoffs_tree.item(selected[0])['values']
             writeoff_id = int(values[0])
             reserve_id = int(values[1])
             comment = values[9] if len(values) > 9 else ""
 
-            # Показываем информацию о списании
             info_msg = (
                 f"Отменить списание?\n\n"
                 f"ID списания: {writeoff_id}\n"
-                f"ID резерва: {reserve_id}\n"
-                f"Комментарий: {comment}\n\n"
+                f"ID резерва: {reserve_id}\n\n"
                 f"⚠️ Это действие:\n"
                 f"• Вернёт материал в резерв\n"
                 f"• Вернёт материал на склад\n"
@@ -2852,16 +2849,11 @@ class ProductionApp:
             if not messagebox.askyesno("Подтверждение", info_msg):
                 return
 
-            print(f"\n{'=' * 80}")
-            print(f"🔵 ОТМЕНА СПИСАНИЯ ID={writeoff_id}")
-            print(f"{'=' * 80}")
-
-            # Загружаем данные
             writeoffs_df = load_data("WriteOffs")
             reservations_df = load_data("Reservations")
             materials_df = load_data("Materials")
+            order_details_df = load_data("OrderDetails")
 
-            # Находим запись списания
             writeoff_row = writeoffs_df[writeoffs_df["ID списания"] == writeoff_id]
 
             if writeoff_row.empty:
@@ -2873,17 +2865,10 @@ class ProductionApp:
             reserve_id = int(writeoff_row["ID резерва"])
             quantity = int(writeoff_row["Количество"])
             material_id = int(writeoff_row["ID материала"])
-            writeoff_date = writeoff_row["Дата списания"]
-            writeoff_comment = writeoff_row["Комментарий"]
+            writeoff_date = str(writeoff_row["Дата списания"])
+            writeoff_comment = str(writeoff_row["Комментарий"])
 
-            print(f"📋 Информация о списании:")
-            print(f"   Резерв: {reserve_id}")
-            print(f"   Материал: {material_id}")
-            print(f"   Количество: {quantity}")
-            print(f"   Дата: {writeoff_date}")
-            print(f"   Комментарий: {writeoff_comment}")
-
-            # ========== ШАГ 1: ОБНОВЛЕНИЕ РЕЗЕРВА ==========
+            # ОБНОВЛЕНИЕ РЕЗЕРВА
             reserve_row = reservations_df[reservations_df["ID резерва"] == reserve_id]
 
             if reserve_row.empty:
@@ -2900,11 +2885,7 @@ class ProductionApp:
             reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Списано"] = new_written_off
             reservations_df.loc[reservations_df["ID резерва"] == reserve_id, "Остаток к списанию"] = new_remainder
 
-            print(f"\n✅ Резерв обновлён:")
-            print(f"   Было списано: {old_written_off} → {new_written_off}")
-            print(f"   Остаток: {old_remainder} → {new_remainder}")
-
-            # ========== ШАГ 2: ОБНОВЛЕНИЕ МАТЕРИАЛА НА СКЛАДЕ ==========
+            # ОБНОВЛЕНИЕ МАТЕРИАЛА
             if material_id != -1:
                 material = materials_df[materials_df["ID"] == material_id]
 
@@ -2920,208 +2901,98 @@ class ProductionApp:
                     materials_df.loc[materials_df["ID"] == material_id, "Количество штук"] = new_qty
                     materials_df.loc[materials_df["ID"] == material_id, "Зарезервировано"] = new_reserved
 
-                    # Пересчитываем площадь
                     area_per_piece = float(material["Длина"]) * float(material["Ширина"]) / 1_000_000
                     new_area = new_qty * area_per_piece
                     materials_df.loc[materials_df["ID"] == material_id, "Общая площадь"] = round(new_area, 2)
 
-                    print(f"\n✅ Материал на складе обновлён:")
-                    print(f"   Всего: {old_qty} → {new_qty}")
-                    print(f"   Зарезервировано: {old_reserved} → {new_reserved}")
-
-            # ========== ШАГ 3: ОБНОВЛЕНИЕ ТАБЛИЦЫ ИМПОРТА ОТ ЛАЗЕРЩИКОВ ==========
-            # Проверяем, было ли это списание из импорта от лазерщиков
+            # ОБНОВЛЕНИЕ ТАБЛИЦЫ ИМПОРТА
             is_laser_import = "Лазер:" in writeoff_comment or "лазерщик" in writeoff_comment.lower()
 
             if is_laser_import and hasattr(self, 'laser_table_data') and self.laser_table_data:
-                print(f"\n🔄 Поиск соответствующей строки в таблице импорта...")
-
-                # Ищем соответствующую строку по дате и комментарию
-                writeoff_datetime = writeoff_date  # Формат: "DD.MM.YYYY HH:MM" или "YYYY-MM-DD HH:MM:SS"
-
-                updated_count = 0
-                for idx, row_data in enumerate(self.laser_table_data):
-                    # Проверяем совпадение по дате списания
-                    row_writeoff_date = row_data.get("Дата списания", "")
-
-                    # Сравниваем даты (могут быть в разных форматах)
-                    if row_writeoff_date and writeoff_datetime:
-                        # Упрощённое сравнение по первым символам даты
-                        row_date_part = row_writeoff_date[:16] if len(row_writeoff_date) >= 16 else row_writeoff_date
-                        writeoff_date_part = writeoff_datetime[:16] if len(
-                            writeoff_datetime) >= 16 else writeoff_datetime
-
-                        if row_date_part == writeoff_date_part or row_data.get("Списано") in ["✓", "Да", "Yes"]:
-                            # Дополнительная проверка по количеству (если есть в комментарии)
-                            # Сбрасываем статус списания
-                            self.laser_table_data[idx]["Списано"] = ""
-                            self.laser_table_data[idx]["Дата списания"] = ""
-                            updated_count += 1
-
-                            print(f"   ✅ Обновлена строка #{idx + 1}: {row_data.get('order', 'N/A')}")
-
-                if updated_count > 0:
-                    print(f"\n✅ Обновлено строк в таблице импорта: {updated_count}")
-                    # Обновляем визуа��ьное отображение
-                    if hasattr(self, 'laser_import_tree'):
-                        self.refresh_laser_import_table()
-
-                        # 🆕 АВТОСОХРАНЕНИЕ ПОСЛЕ ОБНОВЛЕНИЯ
-                        self.save_laser_import_cache()
-                else:
-                    print(f"   ⚠️ Соответствующие строки в таблице импорта не найдены")
-
-            # ========== ШАГ 3.5: ОТКАТ КОЛИЧЕСТВА ПОРЕЗАННЫХ ДЕТАЛЕЙ ==========
-            print(f"\n🔄 Откат количества порезанных деталей...")
-
-            try:
-                # Извлекаем информацию из комментария списания
-                # Формат: "Лазер: @username | Деталь: название | Дата импорта: DD.MM.YYYY HH:MM"
                 import re
 
                 part_name = None
                 parts_qty = None
 
-                # Пытаемся извлечь название детали из комментария
                 part_match = re.search(r'Деталь:\s*([^|]+)', writeoff_comment)
                 if part_match:
                     part_name = part_match.group(1).strip()
-                    print(f"   📋 Название детали из комментария: '{part_name}'")
 
-                # Пытаемся извлечь дату импорта из комментария
                 date_match = re.search(r'Дата импорта:\s*(.+)', writeoff_comment)
                 import_date_str = date_match.group(1).strip() if date_match else None
 
-                # Ищем соответствующую строку в таблице импорта
-                if part_name and hasattr(self, 'laser_table_data') and self.laser_table_data:
-                    print(f"   🔍 Поиск строки в таблице импорта...")
+                for idx, row_data in enumerate(self.laser_table_data):
+                    row_part = str(row_data.get("part", ""))
 
-                    for idx, row_data in enumerate(self.laser_table_data):
-                        # Проверяем совпадение по детали
-                        row_part = str(row_data.get("part", ""))
+                    if part_name and (part_name.lower() in row_part.lower() or row_part.lower() in part_name.lower()):
+                        row_date = str(row_data.get("Дата (МСК)", ""))
+                        row_time = str(row_data.get("Время (МСК)", ""))
+                        row_datetime = f"{row_date} {row_time}"
 
-                        if part_name.lower() in row_part.lower() or row_part.lower() in part_name.lower():
-                            # Дополнительная проверка по дате
-                            row_date = str(row_data.get("Дата (МСК)", ""))
-                            row_time = str(row_data.get("Время (МСК)", ""))
-                            row_datetime = f"{row_date} {row_time}"
+                        date_match_found = False
+                        if import_date_str and len(row_datetime) >= 16 and len(import_date_str) >= 16:
+                            if row_datetime[:16] == import_date_str[:16]:
+                                date_match_found = True
+                        elif not import_date_str:
+                            row_writeoff_date = row_data.get("Дата списания", "")
 
-                            # Проверяем совпадение дат
-                            date_match_found = False
-                            if import_date_str:
-                                # Сравниваем первые символы (дата без секунд)
-                                if row_datetime[:16] == import_date_str[:16]:
-                                    date_match_found = True
+                            # Безопасное преобразование
+                            if pd.isna(row_writeoff_date) or row_writeoff_date is None:
+                                row_writeoff_date = ""
                             else:
-                                # Если даты нет в комментарии, проверяем по дате списания
-                                row_writeoff_date = str(row_data.get("Дата списания", ""))
+                                row_writeoff_date = str(row_writeoff_date)
+
+                            if len(row_writeoff_date) >= 16 and len(writeoff_date) >= 16:
                                 if row_writeoff_date[:16] == writeoff_date[:16]:
                                     date_match_found = True
 
-                            if date_match_found:
-                                try:
-                                    parts_qty = int(row_data.get("part_quantity", 0))
-                                    print(f"   ✅ Найдена строка #{idx + 1}:")
-                                    print(f"      Деталь: {row_part}")
-                                    print(f"      Количество деталей: {parts_qty}")
-                                    break
-                                except ValueError:
-                                    print(f"   ⚠️ Не удалось преобразовать количество: {row_data.get('part_quantity')}")
+                        if date_match_found:
+                            try:
+                                parts_qty = int(row_data.get("part_quantity", 0))
+                                self.laser_table_data[idx]["Списано"] = ""
+                                self.laser_table_data[idx]["Дата списания"] = ""
+                            except:
+                                pass
+                            break
 
-                # Если не нашли в таблице импорта, пробуем альтернативный способ
-                if parts_qty is None or parts_qty == 0:
-                    print(f"   ⚠️ Количество деталей не найдено в таблице импорта")
+                if hasattr(self, 'laser_import_tree'):
+                    self.refresh_laser_import_table()
+                    try:
+                        self.save_laser_import_cache()
+                    except:
+                        pass
 
-                    # Пробуем найти в базе данных по дате списания
-                    # (если списывали несколько раз одну и ту же деталь)
-                    print(f"   🔍 Попытка найти через базу WriteOffs...")
+            # ОТКАТ ДЕТАЛЕЙ
+            if is_laser_import and "Деталь:" in writeoff_comment and parts_qty:
+                try:
+                    import re
+                    part_match = re.search(r'Деталь:\s*([^|]+)', writeoff_comment)
 
-                    writeoffs_df_check = load_data("WriteOffs")
-                    similar_writeoffs = writeoffs_df_check[
-                        (writeoffs_df_check["ID заказа"] == int(writeoff_row["ID заказа"])) &
-                        (writeoffs_df_check["Дата списания"] == writeoff_date) &
-                        (writeoffs_df_check["Комментарий"].str.contains(part_name, case=False, na=False))
-                        ]
+                    if part_match and parts_qty > 0:
+                        part_name = part_match.group(1).strip()
+                        order_id = int(writeoff_row["ID заказа"])
 
-                    if len(similar_writeoffs) > 0:
-                        print(f"   ℹ️ Найдено похожих списаний: {len(similar_writeoffs)}")
-                        print(f"   ⚠️ Невозможно точно определить количество деталей")
-                        # Не откатываем, если не уверены
-                        parts_qty = None
+                        detail_match = order_details_df[
+                            (order_details_df["ID заказа"] == order_id) &
+                            (order_details_df["Название детали"].str.contains(part_name, case=False, na=False))
+                            ]
 
-                # Если нашли количество, откатываем
-                if parts_qty and parts_qty > 0 and part_name:
-                    print(f"   🔄 Откат количества: {parts_qty} шт для детали '{part_name}'")
+                        if not detail_match.empty:
+                            detail_id = int(detail_match.iloc[0]["ID"])
+                            old_cut = int(detail_match.iloc[0].get("Порезано", 0))
+                            new_cut = max(0, old_cut - parts_qty)
+                            order_details_df.loc[order_details_df["ID"] == detail_id, "Порезано"] = new_cut
+                            save_data("OrderDetails", order_details_df)
+                except:
+                    pass
 
-                    # Загружаем детали заказа
-                    order_details_df = load_data("OrderDetails")
-                    order_id = int(writeoff_row["ID заказа"])
-
-                    print(f"   🔍 Поиск детали в заказе ID={order_id}...")
-
-                    # Ищем деталь в заказе
-                    detail_match = order_details_df[
-                        (order_details_df["ID заказа"] == order_id) &
-                        (order_details_df["Название детали"].str.contains(part_name, case=False, na=False))
-                        ]
-
-                    if not detail_match.empty:
-                        detail_id = int(detail_match.iloc[0]["ID"])
-                        detail_name_full = detail_match.iloc[0]["Название детали"]
-                        old_cut = int(detail_match.iloc[0].get("Порезано", 0))
-                        total_qty = int(detail_match.iloc[0].get("Количество", 0))
-
-                        # Откатываем количество (не даём уйти в минус)
-                        new_cut = max(0, old_cut - parts_qty)
-
-                        order_details_df.loc[order_details_df["ID"] == detail_id, "Порезано"] = new_cut
-
-                        print(f"   ✅ Деталь '{detail_name_full}' откачена:")
-                        print(f"      ID детали: {detail_id}")
-                        print(f"      Всего требуется: {total_qty}")
-                        print(f"      Было порезано: {old_cut}")
-                        print(f"      Откачено: -{parts_qty}")
-                        print(f"      Стало порезано: {new_cut}")
-                        print(f"      Осталось порезать: {total_qty - new_cut}")
-
-                        # Сохраняем изменения
-                        save_data("OrderDetails", order_details_df)
-
-                        print(f"   💾 Изменения сохранены в OrderDetails")
-                    else:
-                        print(f"   ❌ Деталь '{part_name}' не найдена в заказе ID={order_id}")
-                        print(f"   📋 Доступные детали в заказе:")
-
-                        # Показываем список деталей для отладки
-                        order_details = order_details_df[order_details_df["ID заказа"] == order_id]
-                        for _, detail in order_details.iterrows():
-                            print(f"      - {detail['Название детали']}")
-                else:
-                    print(f"   ⚠️ Откат детали пропущен (недостаточно данных)")
-                    print(f"      Деталь: {part_name if part_name else 'не найдена'}")
-                    print(f"      Количество: {parts_qty if parts_qty else 'не найдено'}")
-
-            except Exception as e:
-                print(f"   💥 Ошибка отката детали: {e}")
-                import traceback
-                traceback.print_exc()
-
-            # ========== ШАГ 4: УДАЛЕНИЕ ЗАПИСИ О СПИСАНИИ ==========
+            # УДАЛЕНИЕ СПИСАНИЯ
             writeoffs_df = writeoffs_df[writeoffs_df["ID списания"] != writeoff_id]
 
-            print(f"\n🗑️ Запись о списании ID={writeoff_id} удалена")
-
-            # ========== ШАГ 5: СОХРАНЕНИЕ ИЗМЕНЕНИЙ ==========
-            print(f"\n💾 Сохранение изменений в базу данных...")
-
+            # СОХРАНЕНИЕ
             save_data("WriteOffs", writeoffs_df)
             save_data("Reservations", reservations_df)
             save_data("Materials", materials_df)
-
-            print(f"✅ Данные сохранены")
-
-            # ========== ШАГ 6: ОБНОВЛЕНИЕ ИНТЕРФЕЙСА ==========
-            print(f"\n🔄 Обновление интерфейса...")
 
             # ОБНОВЛЕНИЕ ИНТЕРФЕЙСА
             self.refresh_writeoffs()
@@ -3134,28 +3005,16 @@ class ProductionApp:
             if hasattr(self, 'refresh_order_details'):
                 self.refresh_order_details()
 
-            # 🆕 ОБНОВЛЯЕМ ВКЛАДКУ УЧЁТА ДЕТАЛЕЙ
-            if hasattr(self, 'refresh_details'):
-                self.refresh_details()
-
-            print(f"✅ Интерфейс обновлён")
-
-            print(f"\n{'=' * 80}")
-            print(f"✅ ОТМЕНА СПИСАНИЯ ЗАВЕРШЕНА УСПЕШНО")
-            print(f"{'=' * 80}\n")
-
             messagebox.showinfo("Успех",
                                 f"✅ Списание отменено!\n\n"
                                 f"Возвращено в резерв: {quantity} шт\n"
                                 f"Резерв ID: {reserve_id}\n"
-                                f"Остаток к списанию: {new_remainder} шт\n\n"
-                                f"{'Таблица импорта обновлена' if updated_count > 0 else 'Таблица импорта не затронута'}")
+                                f"Остаток к списанию: {new_remainder} шт")
 
         except Exception as e:
-            print(f"\n💥 КРИТИЧЕСКАЯ ОШИБКА: {e}")
+            messagebox.showerror("Ошибка", f"Не удалось отменить списание:\n{e}")
             import traceback
             traceback.print_exc()
-            messagebox.showerror("Ошибка", f"Не удалось отменить списание:\n{e}")
 
     def find_laser_import_row_by_writeoff(self, writeoff_data):
         """
