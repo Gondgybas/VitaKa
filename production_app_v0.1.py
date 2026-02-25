@@ -107,10 +107,6 @@ class ProductionApp:
         self.notebook.add(self.laser_import_frame, text='Импорт от лазерщиков')
         self.setup_laser_import_tab()
 
-        self.balance_frame = tk.Frame(self.notebook, bg='white')
-        self.notebook.add(self.balance_frame, text='Баланс материалов')
-        self.setup_balance_tab()
-
         # 🆕 НОВАЯ ВКЛАДКА
         self.details_frame = tk.Frame(self.notebook, bg='white')
         self.notebook.add(self.details_frame, text='Учёт деталей')
