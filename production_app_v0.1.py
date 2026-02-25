@@ -4059,22 +4059,63 @@ class ProductionApp:
                 return False
 
             # Парсинг размеров
-            metal_parts = metal_description.split()
+            import re
             thickness = None
             width = None
             length = None
 
-            for part in metal_parts:
-                match = re.search(r'(\d+(?:\.\d+)?)[хxХX](\d+(?:\.\d+)?)[хxХX](\d+(?:\.\d+)?)', part)
+            print(f"   🔍 Парсинг материала: '{metal_description}'")
+            print(f"   📏 Длина строки: {len(metal_description)} символов")
+            print(f"   🔤 Побайтово: {metal_description.encode('utf-8')}")
+
+            # Пробуем разные паттерны
+            patterns = [
+                (r'(\d+(?:\.\d+)?)\s*мм\s*(\d+(?:\.\d+)?)\s*[xXхХ×]\s*(\d+(?:\.\d+)?)', "Формат: 4.0мм 1500x3000"),
+                (r'(\d+(?:\.\d+)?)\s*[xXхХ×]\s*(\d+(?:\.\d+)?)\s*[xXхХ×]\s*(\d+(?:\.\d+)?)', "Формат: 4x1500x3000"),
+                (r'(\d+(?:\.\d+)?)\s*мм?\s*(\d+(?:\.\d+)?)\s*[xXхХ×]?\s*(\d+(?:\.\d+)?)', "Формат гибкий"),
+            ]
+
+            for idx, (pattern, description) in enumerate(patterns, 1):
+                print(f"   🧪 Тест паттерна {idx}: {description}")
+                match = re.search(pattern, metal_description, re.IGNORECASE)
+
                 if match:
                     thickness = float(match.group(1))
                     width = float(match.group(2))
                     length = float(match.group(3))
+                    print(f"   ✅ УСПЕХ! Найдено: {thickness} × {width} × {length}")
                     break
+                else:
+                    print(f"   ❌ Не подошёл")
 
             if not thickness:
-                row_data["_status"] = f"Ошибка: не определены размеры"
+                # Попробуем найти хоть какие-то числа
+                all_numbers = re.findall(r'\d+(?:\.\d+)?', metal_description)
+                print(f"   🔢 Все числа в строке: {all_numbers}")
+
+                # Если нашли минимум 3 числа - попробуем взять последние 3
+                if len(all_numbers) >= 3:
+                    try:
+                        # Ищем первое число как толщину (обычно 3-10)
+                        for i, num in enumerate(all_numbers):
+                            val = float(num)
+                            if 0.5 <= val <= 50:  # Толщина обычно от 0.5 до 50 мм
+                                thickness = val
+                                # Берём следующие 2 числа как размеры
+                                if i + 2 < len(all_numbers):
+                                    width = float(all_numbers[i + 1])
+                                    length = float(all_numbers[i + 2])
+                                    print(f"   ⚠️ Использована эвристика: {thickness} × {width} × {length}")
+                                    break
+                    except:
+                        pass
+
+            if not thickness:
+                print(f"   ❌ НЕ РАСПОЗНАНО: '{metal_description}'")
+                row_data["_status"] = f"Ошибка парсинга материала"
                 return False
+
+            print(f"   ✅ ИТОГО: толщина={thickness}, ширина={width}, длина={length}")
 
             # Поиск резерва
             reservations_df = load_data("Reservations")
@@ -4496,30 +4537,45 @@ class ProductionApp:
                     print(f"   ✅ Заказ найден: ID={order_id}")
 
                     # ========== ШАГ 2: ПАРСИНГ МАТЕРИАЛА ==========
-                    # Пример: "ГК Ст.3 6х1500х3000" → марка="ГК Ст.3", толщина=6, ширина=1500, длина=3000
-                    metal_parts = metal_desc.strip().split()
+                    # Примеры:
+                    # "ГК Ст.3 4.0мм 1500x3000" → марка="ГК Ст.3", толщина=4.0, ширина=1500, длина=3000
+                    # "ГК Ст.3 6х1500х3000" → марка="ГК Ст.3", толщина=6, ширина=1500, длина=3000
 
-                    # Ищем размеры (формат: NxMxK или NхMхK)
                     thickness = None
                     width = None
                     length = None
                     marka = None
 
-                    for part in metal_parts:
-                        # Проверяем на размеры
-                        size_match = re.search(r'(\d+(?:\.\d+)?)[хxХX](\d+(?:\.\d+)?)[хxХX](\d+(?:\.\d+)?)', part)
-                        if size_match:
-                            thickness = float(size_match.group(1))
-                            width = float(size_match.group(2))
-                            length = float(size_match.group(3))
+                    print(f"   🔍 Парсинг материала: '{metal_desc}'")
+
+                    # 🆕 ПАТТЕРН 1: Фо��мат с "мм" (4.0мм 1500x3000)
+                    pattern1 = r'(\d+(?:\.\d+)?)\s*мм\s*(\d+(?:\.\d+)?)\s*[xXхХ×]\s*(\d+(?:\.\d+)?)'
+                    match1 = re.search(pattern1, metal_desc, re.IGNORECASE)
+
+                    if match1:
+                        thickness = float(match1.group(1))
+                        width = float(match1.group(2))
+                        length = float(match1.group(3))
+                        # Марка - всё до размеров
+                        marka = metal_desc.split(match1.group(0))[0].strip()
+                        print(f"   ✅ Паттерн 1 (с мм): {thickness}мм {width}x{length}, марка='{marka}'")
+
+                    # ПАТТЕРН 2: Классический формат (6х1500х3000)
+                    if not thickness:
+                        pattern2 = r'(\d+(?:\.\d+)?)\s*[xXхХ×]\s*(\d+(?:\.\d+)?)\s*[xXхХ×]\s*(\d+(?:\.\d+)?)'
+                        match2 = re.search(pattern2, metal_desc)
+
+                        if match2:
+                            thickness = float(match2.group(1))
+                            width = float(match2.group(2))
+                            length = float(match2.group(3))
                             # Марка - всё до размеров
-                            marka_parts = metal_desc.split(part)[0].strip().split()
-                            marka = " ".join(marka_parts)
-                            break
+                            marka = metal_desc.split(match2.group(0))[0].strip()
+                            print(f"   ✅ Паттерн 2 (без мм): {thickness}х{width}х{length}, марка='{marka}'")
 
                     if not thickness or not marka:
                         errors.append(f"❌ Не удалось распарсить материал: {metal_desc}")
-                        print(f"   ❌ Ошибка парсинга материала")
+                        print(f"   ❌ Ошибка парсинга материала: '{metal_desc}'")
                         continue
 
                     print(f"   📦 Распарсенный материал:")
