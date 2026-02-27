@@ -3569,6 +3569,33 @@ class ProductionApp:
         self.refresh_details()
 
     def refresh_details(self):
+        """Обновление таблицы деталей"""
+
+        def safe_int(value, default=0):
+            if value == "" or pd.isna(value) or value is None:
+                return default
+            try:
+                return int(value)
+            except (ValueError, TypeError):
+                return default
+
+        for item in self.details_tree.get_children():
+            self.details_tree.delete(item)
+
+        order_details_df = load_data("OrderDetails")
+        orders_df = load_data("Orders")
+
+        if order_details_df.empty:
+            return
+
+        # 🆕 ОЧИСТКА ПУСТЫХ ЗНАЧЕНИЙ
+        order_details_df["Количество"] = order_details_df["Количество"].replace("", 0)
+        order_details_df["Порезано"] = order_details_df["Порезано"].replace("", 0)
+        order_details_df["Погнуто"] = order_details_df["Погнуто"].replace("", 0)
+
+        # Сохраняем очищенные данные
+        save_data("OrderDetails", order_details_df)
+
         """Обновление таблицы учёта деталей"""
 
         # Очищаем таблицу
