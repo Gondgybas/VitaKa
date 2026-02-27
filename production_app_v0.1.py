@@ -4495,7 +4495,7 @@ class ProductionApp:
         if not self.laser_table_data:
             return
 
-        # 🔥 СОРТИРОВКА: НОВЫЕ ЗАПИСИ ВВЕРХУ
+        # СОРТИРОВКА: НОВЫЕ ЗАПИСИ ВВЕРХУ
         try:
             # Преобразуем в DataFrame
             df_display = pd.DataFrame(self.laser_table_data)
@@ -4519,6 +4519,9 @@ class ProductionApp:
         except Exception as e:
             print(f"⚠️ Ошибка сортировки: {e}")
             sorted_data = self.laser_table_data
+
+        # 🆕 СОХРАНЯЕМ ОТСОРТИРОВАННЫЕ ДАННЫЕ ОБРАТНО
+        self.laser_table_data = sorted_data
 
         # СЧЁТЧИКИ
         manual_count = 0
@@ -4560,8 +4563,6 @@ class ProductionApp:
             self.laser_import_tree.insert("", "end", values=values, tags=(tag,))
 
         self.auto_resize_columns(self.laser_import_tree)
-
-        print(f"📊 Отображено: 🔵 Синих={manual_count}, 🟢 Зелёных={auto_count}, 🟡 Жёлтых={pending_count}")
 
     def test_add_rows(self):
         """Тестовая функция для проверки отображения строк"""
