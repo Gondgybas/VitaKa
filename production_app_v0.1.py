@@ -3954,13 +3954,65 @@ class ProductionApp:
             self.laser_table_data = []
             return
 
-        # 🆕 СЧЁТЧИКИ ДЛЯ ДИАГНОСТИКИ
+        if not self.laser_table_data:
+            return
+
+        # 🔥 СОРТИРОВКА С ПРАВИЛЬНЫМ ФОРМАТОМ ДАТЫ
+        try:
+            print(f"🔄 Сортировка {len(self.laser_table_data)} записей перед отображением...")
+
+            # Преобразуем в DataFrame
+            df_display = pd.DataFrame(self.laser_table_data)
+
+            # 🆕 ПРАВИЛЬНЫЙ ПАРСИНГ ДАТЫ: ФОРМАТ DD.MM.YYYY
+            df_display['_datetime_sort'] = pd.to_datetime(
+                df_display['Дата (МСК)'].astype(str) + ' ' + df_display['Время (МСК)'].astype(str),
+                format='%d.%m.%Y %H:%M:%S',  # ← ЯВНО УКАЗЫВАЕМ ФОРМАТ
+                errors='coerce'
+            )
+
+            # Сортируем по убыванию (новые сверху)
+            df_display = df_display.sort_values('_datetime_sort', ascending=False, na_position='last')
+
+            # Удаляем временную колонку
+            df_display = df_display.drop('_datetime_sort', axis=1)
+
+            # Преобразуем обратно в список словарей
+            sorted_data = df_display.to_dict('records')
+
+            # Показываем первую и последнюю запись
+            if sorted_data:
+                first = f"{sorted_data[0].get('Дата (МСК)', '')} {sorted_data[0].get('Время (МСК)', '')}"
+                last = f"{sorted_data[-1].get('Дата (МСК)', '')} {sorted_data[-1].get('Время (МСК)', '')}"
+                print(f"✅ Отсортировано: ПЕРВАЯ (новая) = {first}, ПОСЛЕДНЯЯ (старая) = {last}")
+        except Exception as e:
+            print(f"⚠️ Ошибка сортировки (формат DD.MM.YYYY): {e}")
+
+            # 🆕 ПОПРОБУЕМ АЛЬТЕРНАТИВНЫЙ ФОРМАТ
+            try:
+                print("🔄 Пробуем альтернативный формат YYYY-MM-DD...")
+                df_display = pd.DataFrame(self.laser_table_data)
+                df_display['_datetime_sort'] = pd.to_datetime(
+                    df_display['Дата (МСК)'].astype(str) + ' ' + df_display['Время (МСК)'].astype(str),
+                    errors='coerce'
+                )
+                df_display = df_display.sort_values('_datetime_sort', ascending=False, na_position='last')
+                df_display = df_display.drop('_datetime_sort', axis=1)
+                sorted_data = df_display.to_dict('records')
+                print("✅ Альтернативный формат сработал!")
+            except Exception as e2:
+                print(f"⚠️ И альтернативный формат не сработал: {e2}")
+                import traceback
+                traceback.print_exc()
+                sorted_data = self.laser_table_data
+
+        # СЧЁТЧИКИ
         manual_count = 0
         auto_count = 0
         pending_count = 0
 
-        # Заполняем таблицу
-        for idx, row_data in enumerate(self.laser_table_data):
+        # Заполняем таблицу ОТСОРТИРОВАННЫМИ данными
+        for idx, row_data in enumerate(sorted_data):
             date_val = row_data.get("Дата (МСК)", "")
             time_val = row_data.get("Время (МСК)", "")
             username = row_data.get("username", "")
@@ -3972,7 +4024,7 @@ class ProductionApp:
             written_off = row_data.get("Списано", "")
             writeoff_date = row_data.get("Дата списания", "")
 
-            # 🆕 БЕЗОПАСНОЕ ПРЕОБРАЗОВАНИЕ written_off В СТРОКУ
+            # БЕЗОПАСНОЕ ПРЕОБРАЗОВАНИЕ written_off В СТРОКУ
             if pd.isna(written_off) or written_off is None:
                 written_off = ""
             else:
@@ -3980,25 +4032,22 @@ class ProductionApp:
 
             values = (date_val, time_val, username, order, metal, metal_qty, part, part_qty, written_off, writeoff_date)
 
-            # 🆕 ПРАВИЛЬНОЕ ОПРЕДЕЛЕНИЕ ЦВЕТА С ДИАГНОСТИКОЙ
+            # ЦВЕТОВАЯ ИНДИКАЦИЯ
             if written_off == "Вручную":
-                tag = 'manual'  # Светло-синий для ручных пометок
+                tag = 'manual'
                 manual_count += 1
-                if idx < 3:  # Выводим первые 3 для проверки
-                    print(f"   🔵 Строка {idx + 1}: '{written_off}' → тег 'manual' (синий)")
             elif written_off in ["Да", "✓", "Yes"]:
-                tag = 'written_off'  # Зелёный для автоматических списаний
+                tag = 'written_off'
                 auto_count += 1
             else:
-                tag = 'pending'  # Жёлтый для ожидающих
+                tag = 'pending'
                 pending_count += 1
 
             self.laser_import_tree.insert("", "end", values=values, tags=(tag,))
 
-        # 🆕 ИТОГОВАЯ ДИАГНОСТИКА
-        print(f"\n📊 Итого цветов: 🔵 Синих={manual_count}, 🟢 Зелёных={auto_count}, 🟡 Жёлтых={pending_count}")
-
         self.auto_resize_columns(self.laser_import_tree)
+
+        print(f"📊 Отображено: 🔵 Синих={manual_count}, 🟢 Зелёных={auto_count}, 🟡 Жёлтых={pending_count}")
 
     def writeoff_selected_laser_row(self):
         """Списание выбранной строки"""
@@ -4271,7 +4320,8 @@ class ProductionApp:
                 laser_df = pd.read_excel(file_path, engine='openpyxl')
 
             # Проверка обязательных колонок
-            required = ["Дата (МСК)", "Время (МСК)", "username", "order", "metal", "metal_quantity", "part", "part_quantity"]
+            required = ["Дата (МСК)", "Время (МСК)", "username", "order", "metal", "metal_quantity", "part",
+                        "part_quantity"]
             missing = [col for col in required if col not in laser_df.columns]
 
             if missing:
@@ -4360,6 +4410,23 @@ class ProductionApp:
             # Сохраняем объединённые данные
             self.laser_table_data = merged_data
 
+            # 🆕 СОРТИРОВКА: НОВЫЕ ЗАПИСИ ВВЕРХУ
+            try:
+                print("🔄 Сортировка импортированных данных...")
+                df_merged = pd.DataFrame(self.laser_table_data)
+
+                df_merged['_datetime_sort'] = pd.to_datetime(
+                    df_merged['Дата (МСК)'].astype(str) + ' ' + df_merged['Время (МСК)'].astype(str),
+                    errors='coerce'
+                )
+                df_merged = df_merged.sort_values('_datetime_sort', ascending=False, na_position='last')
+                df_merged = df_merged.drop('_datetime_sort', axis=1)
+
+                self.laser_table_data = df_merged.to_dict('records')
+                print(f"✅ Данные отсортированы: {len(self.laser_table_data)} записей")
+            except Exception as e:
+                print(f"⚠️ Ошибка сортировки после импорта: {e}")
+
             # Обновляем таблицу
             self.refresh_laser_import_table()
 
@@ -4398,21 +4465,26 @@ class ProductionApp:
                     f"📈 Статистика:\n"
                     f"  • ✅ Автоматически списано: {auto_count}\n"
                     f"  • 🔵 Помечено вручную: {manual_count}\n"
-                    f"  • 🟡 Ожидает обработки: {pending_count}"
+                    f"  • 🟡 Ожидает списания: {pending_count}\n"
                 )
+
+            # Сохраняем в кэш
+            try:
+                self.save_laser_import_cache()
+            except Exception as cache_err:
+                print(f"⚠️ Не удалось сохранить кэш: {cache_err}")
 
             messagebox.showinfo("Успех", result_msg)
 
-            # Автосохранение после импорта
-            self.save_laser_import_cache()
-
         except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось импортировать:\n{e}")
+            messagebox.showerror("Ошибка импорта", f"Не удалось импортировать файл:\n\n{str(e)}")
+            print(f"❌ Ошибка импорта: {e}")
             import traceback
             traceback.print_exc()
 
     def refresh_laser_import_table(self):
         """Обновление таблицы импорта от лазерщиков"""
+        # Очищаем таблицу
         for item in self.laser_import_tree.get_children():
             self.laser_import_tree.delete(item)
 
@@ -4420,7 +4492,41 @@ class ProductionApp:
             self.laser_table_data = []
             return
 
-        for idx, row_data in enumerate(self.laser_table_data):
+        if not self.laser_table_data:
+            return
+
+        # 🔥 СОРТИРОВКА: НОВЫЕ ЗАПИСИ ВВЕРХУ
+        try:
+            # Преобразуем в DataFrame
+            df_display = pd.DataFrame(self.laser_table_data)
+
+            # Парсинг даты в формате DD.MM.YYYY HH:MM:SS
+            df_display['_datetime_sort'] = pd.to_datetime(
+                df_display['Дата (МСК)'].astype(str) + ' ' + df_display['Время (МСК)'].astype(str),
+                format='%d.%m.%Y %H:%M:%S',
+                errors='coerce'
+            )
+
+            # Сортируем по убыванию (новые вверху)
+            df_display = df_display.sort_values('_datetime_sort', ascending=False, na_position='last')
+
+            # Удаляем временную колонку
+            df_display = df_display.drop('_datetime_sort', axis=1)
+
+            # Преобразуем обратно в список словарей
+            sorted_data = df_display.to_dict('records')
+
+        except Exception as e:
+            print(f"⚠️ Ошибка сортировки: {e}")
+            sorted_data = self.laser_table_data
+
+        # СЧЁТЧИКИ
+        manual_count = 0
+        auto_count = 0
+        pending_count = 0
+
+        # Заполняем таблицу ОТСОРТИРОВАННЫМИ данными
+        for idx, row_data in enumerate(sorted_data):
             date_val = row_data.get("Дата (МСК)", "")
             time_val = row_data.get("Время (МСК)", "")
             username = row_data.get("username", "")
@@ -4432,6 +4538,7 @@ class ProductionApp:
             written_off = row_data.get("Списано", "")
             writeoff_date = row_data.get("Дата списания", "")
 
+            # БЕЗОПАСНОЕ ПРЕОБРАЗОВАНИЕ written_off В СТРОКУ
             if pd.isna(written_off) or written_off is None:
                 written_off = ""
             else:
@@ -4439,16 +4546,22 @@ class ProductionApp:
 
             values = (date_val, time_val, username, order, metal, metal_qty, part, part_qty, written_off, writeoff_date)
 
+            # ЦВЕТОВАЯ ИНДИКАЦИЯ
             if written_off == "Вручную":
                 tag = 'manual'
+                manual_count += 1
             elif written_off in ["Да", "✓", "Yes"]:
                 tag = 'written_off'
+                auto_count += 1
             else:
                 tag = 'pending'
+                pending_count += 1
 
             self.laser_import_tree.insert("", "end", values=values, tags=(tag,))
 
         self.auto_resize_columns(self.laser_import_tree)
+
+        print(f"📊 Отображено: 🔵 Синих={manual_count}, 🟢 Зелёных={auto_count}, 🟡 Жёлтых={pending_count}")
 
     def test_add_rows(self):
         """Тестовая функция для проверки отображения строк"""
@@ -5141,16 +5254,15 @@ class ProductionApp:
             return
 
         try:
-            cache_file = DATA_PATH / "laser_import_cache.xlsx"
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            cache_file = os.path.join(script_dir, "laser_import_cache.xlsx")
 
-            # Преобразуем в DataFrame
+            print(f"💾 Сохранение {len(self.laser_table_data)} записей в кэш...")
+
             df = pd.DataFrame(self.laser_table_data)
-
-            # Сохраняем в Excel
             df.to_excel(cache_file, index=False, engine='openpyxl')
 
             print(f"✅ Кэш импорта сохранён: {len(self.laser_table_data)} записей")
-
         except Exception as e:
             print(f"⚠️ Ошибка сохранения кэша: {e}")
 
@@ -5181,6 +5293,87 @@ class ProductionApp:
                 # 🆕 ВАЖНО: Преобразуем NaN в пустые строки перед конвертацией
                 df = df.fillna("")
 
+                def load_laser_import_cache(self):
+                    """Автоматическая загрузка таблицы импорта из кэш-файла"""
+                    try:
+                        script_dir = os.path.dirname(os.path.abspath(__file__))
+                        cache_file = os.path.join(script_dir, "laser_import_cache.xlsx")
+
+                        if not os.path.exists(cache_file):
+                            print(f"ℹ️ Кэш импорта не найден: {cache_file}")
+                            return
+
+                        df = pd.read_excel(cache_file, engine='openpyxl')
+
+                        if df.empty:
+                            print("ℹ️ Кэш импорта пуст")
+                            return
+
+                        required = ["Дата (МСК)", "Время (МСК)", "username", "order", "metal", "metal_quantity", "part",
+                                    "part_quantity"]
+
+                        if all(col in df.columns for col in required):
+                            df = df.fillna("")
+
+                            # 🆕 СОРТИРОВКА: НОВЫЕ ЗАПИСИ ВВЕРХУ
+                            try:
+                                print("🔄 Сортировка кэша...")
+                                df['_datetime_sort'] = pd.to_datetime(
+                                    df['Дата (МСК)'].astype(str) + ' ' + df['Время (МСК)'].astype(str),
+                                    errors='coerce'
+                                )
+                                df = df.sort_values('_datetime_sort', ascending=False, na_position='last')
+                                df = df.drop('_datetime_sort', axis=1)
+
+                                if not df.empty:
+                                    first = f"{df.iloc[0]['Дата (МСК)']} {df.iloc[0]['Время (МСК)']}"
+                                    last = f"{df.iloc[-1]['Дата (МСК)']} {df.iloc[-1]['Время (МСК)']}"
+                                    print(f"✅ Отсортировано: первая={first}, последняя={last}")
+                            except Exception as e:
+                                print(f"⚠️ Ошибка сортировки: {e}")
+
+                            # Преобразуем в список словарей
+                            self.laser_table_data = df.to_dict('records')
+
+                            # Дополнительная очистка
+                            for row in self.laser_table_data:
+                                if "Списано" in row:
+                                    if pd.isna(row["Списано"]) or row["Списано"] is None:
+                                        row["Списано"] = ""
+                                    else:
+                                        row["Списано"] = str(row["Списано"]).strip()
+
+                                if "Дата списания" in row:
+                                    if pd.isna(row["Дата списания"]) or row["Дата списания"] is None:
+                                        row["Дата списания"] = ""
+                                    else:
+                                        row["Дата списания"] = str(row["Дата списания"]).strip()
+
+                            print(f"✅ Загружен кэш импорта: {len(self.laser_table_data)} записей из {cache_file}")
+
+                            # Обновляем таблицу
+                            if hasattr(self, 'laser_import_tree'):
+                                self.refresh_laser_import_table()
+
+                                if hasattr(self, 'laser_status_label'):
+                                    items_count = len(self.laser_import_tree.get_children())
+                                    auto_count = sum(1 for r in self.laser_table_data if
+                                                     r.get("Списано", "").strip() in ["✓", "Да", "Yes"])
+                                    manual_count = sum(
+                                        1 for r in self.laser_table_data if r.get("Списано", "").strip() == "Вручную")
+                                    pending_count = sum(
+                                        1 for r in self.laser_table_data if not r.get("Списано", "").strip())
+
+                                    status_text = (
+                                        f"📂 Загружено из кэша: {items_count} | "
+                                        f"✅ Списано: {auto_count} | "
+                                        f"🔵 Вручную: {manual_count} | "
+                                        f"🟡 Ожидает: {pending_count}"
+                                    )
+                                    self.laser_status_label.config(text=status_text, bg='#d1ecf1', fg='#0c5460')
+
+                    except Exception as e:
+                        pass
                 # Преобразуем в список словарей
                 self.laser_table_data = df.to_dict('records')
 
