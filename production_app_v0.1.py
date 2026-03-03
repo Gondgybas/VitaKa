@@ -595,22 +595,55 @@ class ProductionApp:
 
         return toggle_vars
 
-    def auto_resize_columns(self, tree):
-        """Автоматическая подгонка ширины колонок"""
-        for col in tree["columns"]:
-            max_width = 100
-            for item in tree.get_children():
-                try:
-                    col_index = tree["columns"].index(col)
-                    cell_value = str(tree.item(item)['values'][col_index])
-                    cell_width = len(cell_value) * 8 + 20
-                    if cell_width > max_width:
-                        max_width = cell_width
-                except:
-                    pass
-            max_width = min(max_width, 400)
-            max_width = max(max_width, 80)
-            tree.column(col, width=max_width)
+    def auto_resize_columns(self, tree, min_width=80, max_width=400):
+        """
+        Автоматический подбор ширины колонок по содержимому
+
+        Args:
+            tree: ttk.Treeview виджет
+            min_width: минимальная ширина колонки (по умолчанию 80)
+            max_width: максимальная ширина колонки (по умол��анию 400)
+        """
+        try:
+            import tkinter.font as tkfont
+
+            # Получаем шрифт дерева
+            try:
+                font = tkfont.Font(font=tree.cget("font"))
+            except:
+                font = tkfont.Font(family="Arial", size=10)
+
+            for col in tree["columns"]:
+                # 1. Измеряем ширину заголовка
+                heading_text = tree.heading(col)["text"]
+                heading_width = font.measure(heading_text) + 40  # +40 для отступов и стрелки сортировки
+
+                # 2. Измеряем максимальную ширину значений в колонке
+                max_content_width = heading_width
+
+                # Проходим по всем видимым элементам
+                for item_id in tree.get_children():
+                    try:
+                        col_index = tree["columns"].index(col)
+                        value = tree.item(item_id)["values"][col_index]
+                        value_str = str(value)
+
+                        # Измеряем ширину текста
+                        value_width = font.measure(value_str) + 30  # +30 для отступов
+
+                        if value_width > max_content_width:
+                            max_content_width = value_width
+                    except:
+                        continue
+
+                # 3. Применяем ограничения min/max
+                optimal_width = max(min_width, min(max_content_width, max_width))
+
+                # 4. Устанавливаем ширину (НЕ МЕНЯЕМ stretch!)
+                tree.column(col, width=int(optimal_width))
+
+        except Exception as e:
+            print(f"⚠️ Ошибка автоподбора ширины колонок: {e}")
 
     def save_toggle_settings(self):
         """Сохранить настройки переключателей"""
@@ -6262,30 +6295,25 @@ class ProductionApp:
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
 
-        columns_config = {"Марка": 150, "Толщина": 100, "Размер": 130, "Всего": 100, "Зарезервировано": 150,
-                          "Доступно": 100}
-        for col, width in columns_config.items():
+        # 🆕 НАСТРОЙКА КОЛОНОК БЕЗ РАСТЯГИВАНИЯ
+        for col in self.balance_tree["columns"]:
             self.balance_tree.heading(col, text=col)
-            self.balance_tree.column(col, width=width, anchor=tk.CENTER)
+            # stretch=False - колонки НЕ растягиваются на всю ширину
+            self.balance_tree.column(col, anchor=tk.CENTER, width=100, minwidth=80, stretch=False)
 
         self.balance_tree.pack(fill=tk.BOTH, expand=True)
 
         # ИНИЦИАЛИЗАЦИЯ ФИЛЬТРА В СТИЛЕ EXCEL
         self.balance_excel_filter = ExcelStyleFilter(
             tree=self.balance_tree,
-            refresh_callback=self.refresh_balance,
-            columns_config=columns_config
+            refresh_callback=self.refresh_balance
         )
 
-        # 🆕 НОВАЯ ЦВЕТОВАЯ ИНДИКАЦИЯ
-        self.balance_tree.tag_configure('negative', background='#f8d7da',
-                                        foreground='#721c24')  # Красный: Доступно < 0 (дефицит!)
-        self.balance_tree.tag_configure('available', background='#d4edda',
-                                        foreground='#155724')  # Зелёный: Доступно > 0 (есть остаток)
-        self.balance_tree.tag_configure('fully_reserved', background='#fff3cd',
-                                        foreground='#856404')  # Жёлтый: Доступно = 0, но Всего > 0 (полностью зарезервировано)
-        self.balance_tree.tag_configure('empty', background='#d1ecf1',
-                                        foreground='#0c5460')  # Голубой: Всего = 0 и Доступно = 0 (пусто)
+        # ЦВЕТОВАЯ ИНДИКАЦИЯ
+        self.balance_tree.tag_configure('negative', background='#f8d7da', foreground='#721c24')
+        self.balance_tree.tag_configure('available', background='#d4edda', foreground='#155724')
+        self.balance_tree.tag_configure('fully_reserved', background='#fff3cd', foreground='#856404')
+        self.balance_tree.tag_configure('empty', background='#d1ecf1', foreground='#0c5460')
 
         # ИНДИКАТОР АКТИВНЫХ ФИЛЬТРОВ
         self.balance_filter_status = tk.Label(
@@ -6297,28 +6325,24 @@ class ProductionApp:
         )
         self.balance_filter_status.pack(pady=5)
 
-        # 🆕 ЛЕГЕНДА ЦВЕТОВ
+        # ЛЕГЕНДА ЦВЕТОВ
         legend_frame = tk.Frame(self.balance_frame, bg='white', relief=tk.RIDGE, borderwidth=1)
         legend_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
 
         tk.Label(legend_frame, text="Легенда:", font=("Arial", 9, "bold"), bg='white').pack(side=tk.LEFT, padx=5)
 
-        # Красный
         tk.Label(legend_frame, text="  Дефицит (Доступно < 0)  ",
                  bg='#f8d7da', fg='#721c24', font=("Arial", 8), relief=tk.RAISED, borderwidth=1).pack(side=tk.LEFT,
                                                                                                       padx=2)
 
-        # Зелёный
         tk.Label(legend_frame, text="  Есть остаток (Доступно > 0)  ",
                  bg='#d4edda', fg='#155724', font=("Arial", 8), relief=tk.RAISED, borderwidth=1).pack(side=tk.LEFT,
                                                                                                       padx=2)
 
-        # Жёлтый
         tk.Label(legend_frame, text="  Зарезервировано (Доступно = 0)  ",
                  bg='#fff3cd', fg='#856404', font=("Arial", 8), relief=tk.RAISED, borderwidth=1).pack(side=tk.LEFT,
                                                                                                       padx=2)
 
-        # Голубой
         tk.Label(legend_frame, text="  Нет на складе (Всего = 0)  ",
                  bg='#d1ecf1', fg='#0c5460', font=("Arial", 8), relief=tk.RAISED, borderwidth=1).pack(side=tk.LEFT,
                                                                                                       padx=2)
@@ -6393,7 +6417,7 @@ class ProductionApp:
 
                 values = (marka, thickness, size, total, reserved, available)
 
-                # 🆕 НОВАЯ ЦВЕТОВАЯ ИНДИКАЦИЯ
+                # ЦВЕТОВАЯ ИНДИКАЦИЯ
                 if available < 0:
                     # 🔴 КРАСНЫЙ: Дефицит! Зарезервировано больше чем есть
                     tag = 'negative'
@@ -6401,10 +6425,10 @@ class ProductionApp:
                     # 🟢 ЗЕЛЁНЫЙ: Есть свободный остаток
                     tag = 'available'
                 elif available == 0 and total > 0:
-                    # 🟡 ЖЁЛТЫЙ: Полностью зарезервировано (есть металл, но весь занят)
+                    # 🟡 ЖЁЛТЫЙ: Полностью зарезервировано
                     tag = 'fully_reserved'
                 else:
-                    # 🔵 ГОЛУБОЙ: Нет на складе (total = 0, available = 0)
+                    # 🔵 ГОЛУБОЙ: Нет на складе
                     tag = 'empty'
 
                 item_id = self.balance_tree.insert("", "end", values=values, tags=(tag,))
@@ -6415,7 +6439,8 @@ class ProductionApp:
                         self.balance_excel_filter._all_item_cache = set()
                     self.balance_excel_filter._all_item_cache.add(item_id)
 
-        self.auto_resize_columns(self.balance_tree)
+        # АВТОПОДБОР ШИРИНЫ КОЛОН��К С ОГРАНИЧЕНИЯМИ
+        self.auto_resize_columns(self.balance_tree, min_width=100, max_width=300)
 
         # ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ ПОСЛЕ ЗАГРУЗКИ ДАННЫХ
         if active_filters_backup and hasattr(self, 'balance_excel_filter'):
