@@ -159,16 +159,47 @@ class ExcelStyleFilter:
 
             # ВСЕГДА ПОКАЗЫВАЕМ ВСЕ ЗНАЧЕНИЯ
             values_to_display = all_unique_values
-            unique_values = sorted(values_to_display)
+
+            # 🆕 ТРЁХУРОВНЕВАЯ СОРТИРОВКА С ПРОВЕРКОЙ НА ДУБЛИКАТЫ
+            selected_visible = []
+            selected_hidden = []
+            unselected = []
+
+            # Разбиваем значения по категориям (ВЗАИМОИСКЛЮЧАЮЩИЕ)
+            for v in values_to_display:
+                is_selected = (v in currently_selected)
+                is_visible = (v in visible_unique_values)
+
+                if is_selected and is_visible:
+                    selected_visible.append(v)
+                elif is_selected and not is_visible:
+                    selected_hidden.append(v)
+                else:
+                    unselected.append(v)
+
+            # Сортируем каждую категорию отдельно
+            selected_visible.sort()
+            selected_hidden.sort()
+            unselected.sort()
+
+            # Объединяем в правильном порядке
+            unique_values = selected_visible + selected_hidden + unselected
 
             print(f"   📊 Статистика:")
             print(f"      Видимых значений: {len(visible_unique_values)}")
             print(f"      Всего значений: {len(all_unique_values)}")
             print(f"      Выбранных ранее: {len(currently_selected)}")
-            print(f"      К отображению: {len(values_to_display)}")
-            print(f"   📋 Видимые: {sorted(visible_unique_values)}")
-            print(f"   📋 Выбранные: {sorted(currently_selected)}")
-            print(f"   📋 К показу: {unique_values}")
+            print(f"      К отображению: {len(unique_values)}")
+            print(f"   📋 1️⃣ Выбранные+видимые ({len(selected_visible)}): {selected_visible}")
+            print(f"   📋 2️⃣ Выбр��нные+скрытые ({len(selected_hidden)}): {selected_hidden}")
+            print(f"   📋 3️⃣ Невыбранные ({len(unselected)}): {unselected}")
+
+            # 🆕 ПРОВЕРКА НА ДУБЛИКАТЫ
+            if len(unique_values) != len(set(unique_values)):
+                print(f"   ⚠️ ОБНАРУЖЕНЫ ДУБЛИКАТЫ!")
+                from collections import Counter
+                duplicates = [item for item, count in Counter(unique_values).items() if count > 1]
+                print(f"      Дубликаты: {duplicates}")
 
             # Вычисляем невидимые
             hidden_selected = currently_selected - visible_unique_values
@@ -312,10 +343,36 @@ class ExcelStyleFilter:
 
             print(f"   🎛️ Создаю {len(unique_values)} чекбоксов...")
 
-            # Чекбоксы для ВСЕХ значений
+            # Счётчики для разделителей
+            count_selected_visible = len(selected_visible)
+            count_selected_hidden = len(selected_hidden)
+            current_index = 0
+
             for value in unique_values:
                 is_checked = (value in currently_selected)
                 is_visible = (value in visible_unique_values)
+
+                # 🆕 РАЗДЕЛИТЕЛЬ 1: После выбранных+видимых, перед выбранными+скрытыми
+                if current_index == count_selected_visible and count_selected_hidden > 0:
+                    separator_frame = tk.Frame(checkboxes_frame, height=2, bg='#bbb')
+                    separator_frame.pack(fill=tk.X, padx=5, pady=5)
+
+                    label_frame = tk.Frame(checkboxes_frame, bg='#ffe8cc')
+                    label_frame.pack(fill=tk.X, padx=2, pady=2)
+                    tk.Label(label_frame, text="▼ Выбранные (скрытые другими фильтрами) ▼",
+                             font=("Arial", 8, "italic"), bg='#ffe8cc', fg='#d97706').pack(pady=2)
+
+                # 🆕 РАЗДЕЛИТЕЛЬ 2: После выбранных+скрытых, перед невыбранными
+                if current_index == count_selected_visible + count_selected_hidden and len(unselected) > 0:
+                    separator_frame = tk.Frame(checkboxes_frame, height=2, bg='#bbb')
+                    separator_frame.pack(fill=tk.X, padx=5, pady=5)
+
+                    label_frame = tk.Frame(checkboxes_frame, bg='#e8e8e8')
+                    label_frame.pack(fill=tk.X, padx=2, pady=2)
+                    tk.Label(label_frame, text="▼ Невыбранные значения ▼",
+                             font=("Arial", 8, "italic"), bg='#e8e8e8', fg='#666').pack(pady=2)
+
+                current_index += 1
 
                 var = tk.BooleanVar(value=is_checked)
                 checkbox_vars[value] = var
