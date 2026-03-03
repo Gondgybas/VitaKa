@@ -1712,7 +1712,17 @@ class ProductionApp:
                 return
 
             try:
-                order_id = int(selected_order["value"].split(" - ")[0])
+                # 🆕 ПРАВИЛЬНЫЙ ПАРСИНГ: "ID:123 | Заказчик | Название"
+                order_str = selected_order["value"]
+
+                if order_str.startswith("ID:"):
+                    order_id = int(order_str.split("ID:")[1].split(" | ")[0].strip())
+                else:
+                    # Старый формат для совместимости
+                    order_id = int(order_str.split(" - ")[0])
+
+                print(f"🔍 Загрузка деталей для заказа ID={order_id}")
+
                 order_details_df = load_data("OrderDetails")
 
                 if not order_details_df.empty:
@@ -1724,14 +1734,19 @@ class ProductionApp:
                                                for _, row in details.iterrows()])
                         detail_combo['values'] = detail_options
                         detail_combo.current(0)
+                        print(f"✅ Найдено деталей: {len(details)}")
                     else:
                         detail_combo['values'] = ["[Нет деталей у заказа]"]
                         detail_combo.current(0)
+                        print(f"⚠️ У заказа ID={order_id} нет деталей")
                 else:
                     detail_combo['values'] = ["[Нет деталей у заказа]"]
                     detail_combo.current(0)
-            except:
-                pass
+                    print(f"⚠️ Таблица деталей пуста")
+            except Exception as e:
+                print(f"❌ Ошибка обновления списка деталей: {e}")
+                import traceback
+                traceback.print_exc()
 
         def on_detail_select(event):
             value = detail_var.get()
@@ -2416,10 +2431,12 @@ class ProductionApp:
                         # Формируем описание металла
                         metal_str = f"{reserve['Марка']} {reserve['Толщина']}мм {reserve['Ширина']}x{reserve['Длина']}"
 
+                        # 🆕 ОБЪЕДИНЯЕМ ЗАКАЗЧИКА И НАЗВАНИЕ ЗАЯВКИ В ОДИН СТОЛБЕЦ
+                        combined_order = f"{customer} | {order_name}"
+
                         # Добавляем строку
                         export_data.append({
-                            "Заказчик": customer,
-                            "Название заявки": order_name,
+                            "Заказ": combined_order,  # ← ОБЪЕДИНЁННЫЙ СТОЛБЕЦ
                             "Название детали": detail_name,
                             "Металл": metal_str
                         })
