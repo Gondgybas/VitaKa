@@ -6270,32 +6270,24 @@ class ProductionApp:
 
         self.balance_tree.pack(fill=tk.BOTH, expand=True)
 
-        # 🆕 ИНИЦИАЛИЗАЦИЯ ФИЛЬТРА В СТИЛЕ EXCEL
+        # ИНИЦИАЛИЗАЦИЯ ФИЛЬТРА В СТИЛЕ EXCEL
         self.balance_excel_filter = ExcelStyleFilter(
             tree=self.balance_tree,
             refresh_callback=self.refresh_balance,
             columns_config=columns_config
         )
 
-        # Цветовые теги (сохраняем!)
-        self.balance_tree.tag_configure('normal', background='white')
-        self.balance_tree.tag_configure('low_stock', background='#fff3cd')
-        self.balance_tree.tag_configure('zero_stock', background='#f8d7da')
+        # 🆕 НОВАЯ ЦВЕТОВАЯ ИНДИКАЦИЯ
+        self.balance_tree.tag_configure('negative', background='#f8d7da',
+                                        foreground='#721c24')  # Красный: Доступно < 0 (дефицит!)
+        self.balance_tree.tag_configure('available', background='#d4edda',
+                                        foreground='#155724')  # Зелёный: Доступно > 0 (есть остаток)
+        self.balance_tree.tag_configure('fully_reserved', background='#fff3cd',
+                                        foreground='#856404')  # Жёлтый: Доступно = 0, но Всего > 0 (полностью зарезервировано)
+        self.balance_tree.tag_configure('empty', background='#d1ecf1',
+                                        foreground='#0c5460')  # Голубой: Всего = 0 и Доступно = 0 (пусто)
 
-        # Панель кнопок
-        buttons_frame = tk.Frame(self.balance_frame, bg='white')
-        buttons_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        btn_style = {"font": ("Arial", 10), "width": 18, "height": 2}
-
-        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white',
-                  command=self.refresh_balance, **btn_style).pack(side=tk.LEFT, padx=5)
-
-        # 🆕 КНОПКА СБРОСА ВСЕХ ФИЛЬТРОВ
-        tk.Button(buttons_frame, text="🔄 Сбросить фильтры", bg='#e67e22', fg='white',
-                  command=self.clear_balance_filters, **btn_style).pack(side=tk.LEFT, padx=5)
-
-        # 🆕 ИНДИКАТОР АКТИВНЫХ ФИЛЬТРОВ
+        # ИНДИКАТОР АКТИВНЫХ ФИЛЬТРОВ
         self.balance_filter_status = tk.Label(
             self.balance_frame,
             text="",
@@ -6304,6 +6296,44 @@ class ProductionApp:
             fg='#0c5460'
         )
         self.balance_filter_status.pack(pady=5)
+
+        # 🆕 ЛЕГЕНДА ЦВЕТОВ
+        legend_frame = tk.Frame(self.balance_frame, bg='white', relief=tk.RIDGE, borderwidth=1)
+        legend_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
+
+        tk.Label(legend_frame, text="Легенда:", font=("Arial", 9, "bold"), bg='white').pack(side=tk.LEFT, padx=5)
+
+        # Красный
+        tk.Label(legend_frame, text="  Дефицит (Доступно < 0)  ",
+                 bg='#f8d7da', fg='#721c24', font=("Arial", 8), relief=tk.RAISED, borderwidth=1).pack(side=tk.LEFT,
+                                                                                                      padx=2)
+
+        # Зелёный
+        tk.Label(legend_frame, text="  Есть остаток (Доступно > 0)  ",
+                 bg='#d4edda', fg='#155724', font=("Arial", 8), relief=tk.RAISED, borderwidth=1).pack(side=tk.LEFT,
+                                                                                                      padx=2)
+
+        # Жёлтый
+        tk.Label(legend_frame, text="  Зарезервировано (Доступно = 0)  ",
+                 bg='#fff3cd', fg='#856404', font=("Arial", 8), relief=tk.RAISED, borderwidth=1).pack(side=tk.LEFT,
+                                                                                                      padx=2)
+
+        # Голубой
+        tk.Label(legend_frame, text="  Нет на складе (Всего = 0)  ",
+                 bg='#d1ecf1', fg='#0c5460', font=("Arial", 8), relief=tk.RAISED, borderwidth=1).pack(side=tk.LEFT,
+                                                                                                      padx=2)
+
+        # Панель кнопок
+        buttons_frame = tk.Frame(self.balance_frame, bg='white')
+        buttons_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        btn_style = {"font": ("Arial", 10), "width": 18, "height": 2}
+
+        tk.Button(buttons_frame, text="🔄 Обновить", bg='#3498db', fg='white',
+                  command=self.refresh_balance, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(buttons_frame, text="✖ Сбросить все фильтры", bg='#e67e22', fg='white',
+                  command=self.clear_balance_filters, **btn_style).pack(side=tk.LEFT, padx=5)
 
         self.refresh_balance()
 
@@ -6325,7 +6355,7 @@ class ProductionApp:
         for i in self.balance_tree.get_children():
             self.balance_tree.delete(i)
 
-        # 🆕 ОЧИЩАЕМ КЭШ ЭЛЕМЕНТОВ
+        # ОЧИЩАЕМ КЭШ ЭЛЕМЕНТОВ
         if hasattr(self, 'balance_excel_filter'):
             self.balance_excel_filter._all_item_cache = set()
 
@@ -6355,7 +6385,7 @@ class ProductionApp:
                 balance_data[key]["reserved"] += int(row["Зарезервировано"])
                 balance_data[key]["available"] += int(row["Доступно"])
 
-            # Заполняем таблицу
+            # Заполняем таблицу с НОВОЙ логикой цветов
             for (marka, thickness, size), data in sorted(balance_data.items()):
                 total = data["total"]
                 reserved = data["reserved"]
@@ -6363,17 +6393,23 @@ class ProductionApp:
 
                 values = (marka, thickness, size, total, reserved, available)
 
-                # Цветовая индикация
-                if available == 0:
-                    tag = 'zero_stock'
-                elif available <= 5:
-                    tag = 'low_stock'
+                # 🆕 НОВАЯ ЦВЕТОВАЯ ИНДИКАЦИЯ
+                if available < 0:
+                    # 🔴 КРАСНЫЙ: Дефицит! Зарезервировано больше чем есть
+                    tag = 'negative'
+                elif available > 0:
+                    # 🟢 ЗЕЛЁНЫЙ: Есть свободный остаток
+                    tag = 'available'
+                elif available == 0 and total > 0:
+                    # 🟡 ЖЁЛТЫЙ: Полностью зарезервировано (есть металл, но весь занят)
+                    tag = 'fully_reserved'
                 else:
-                    tag = 'normal'
+                    # 🔵 ГОЛУБОЙ: Нет на складе (total = 0, available = 0)
+                    tag = 'empty'
 
                 item_id = self.balance_tree.insert("", "end", values=values, tags=(tag,))
 
-                # 🆕 СОХРАНЯЕМ item_id В КЭШ
+                # СОХРАНЯЕМ item_id В КЭШ
                 if hasattr(self, 'balance_excel_filter'):
                     if not hasattr(self.balance_excel_filter, '_all_item_cache'):
                         self.balance_excel_filter._all_item_cache = set()
