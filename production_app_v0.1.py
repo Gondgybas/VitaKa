@@ -106,6 +106,10 @@ class ExcelStyleFilter:
             column = self.tree.identify_column(event.x)
             column_id = self.tree.column(column, "id")
 
+            # 🆕 ПРОПУСКАЕМ ПУСТУЮ КОЛОНКУ-ЗАПОЛНИТЕЛЬ
+            if column_id == "":
+                return
+
             # Показываем меню фильтра
             self.show_filter_menu(event, column_id)
 
@@ -598,49 +602,44 @@ class ProductionApp:
     def auto_resize_columns(self, tree, min_width=80, max_width=400):
         """
         Автоматический подбор ширины колонок по содержимому
-
-        Args:
-            tree: ttk.Treeview виджет
-            min_width: минимальная ширина колонки (по умолчанию 80)
-            max_width: максимальная ширина колонки (по умол��анию 400)
         """
         try:
             import tkinter.font as tkfont
 
-            # Получаем шрифт дерева
             try:
                 font = tkfont.Font(font=tree.cget("font"))
             except:
                 font = tkfont.Font(family="Arial", size=10)
 
             for col in tree["columns"]:
-                # 1. Измеряем ширину заголовка
-                heading_text = tree.heading(col)["text"]
-                heading_width = font.measure(heading_text) + 40  # +40 для отступов и стрелки сортировки
+                # 🆕 ПРОПУСКАЕМ ПУСТУЮ КОЛОНКУ-ЗАПОЛНИТЕЛЬ
+                if col == "":
+                    continue
 
-                # 2. Измеряем максимальную ширину значений в колонке
+                # Измеряем ширину заголов��а
+                heading_text = tree.heading(col)["text"]
+                heading_width = font.measure(heading_text) + 40
+
+                # Измеряем максимальную ширину значений
                 max_content_width = heading_width
 
-                # Проходим по всем видимым элементам
                 for item_id in tree.get_children():
                     try:
                         col_index = tree["columns"].index(col)
                         value = tree.item(item_id)["values"][col_index]
                         value_str = str(value)
-
-                        # Измеряем ширину текста
-                        value_width = font.measure(value_str) + 30  # +30 для отступов
+                        value_width = font.measure(value_str) + 30
 
                         if value_width > max_content_width:
                             max_content_width = value_width
                     except:
                         continue
 
-                # 3. Применяем ограничения min/max
+                # Применяем ограничения
                 optimal_width = max(min_width, min(max_content_width, max_width))
-
-                # 4. Устанавливаем ширину (НЕ МЕНЯЕМ stretch!)
                 tree.column(col, width=int(optimal_width))
+
+                print(f"📏 Колонка '{col}': {int(optimal_width)}px")
 
         except Exception as e:
             print(f"⚠️ Ошибка автоподбора ширины колонок: {e}")
@@ -6286,8 +6285,10 @@ class ProductionApp:
         scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
         scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
 
+        # 🆕 ДОБАВИЛИ КОЛОНКУ "" (ПУСТУЮ) ДЛЯ ЗАПОЛНЕНИЯ ПРОСТРАНСТВА
         self.balance_tree = ttk.Treeview(tree_frame,
-                                         columns=("Марка", "Толщина", "Размер", "Всего", "Зарезервировано", "Доступно"),
+                                         columns=("Марка", "Толщина", "Размер", "Всего", "Зарезервировано", "Доступно",
+                                                  ""),
                                          show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
 
         scroll_y.config(command=self.balance_tree.yview)
@@ -6295,11 +6296,16 @@ class ProductionApp:
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
 
-        # 🆕 НАСТРОЙКА КОЛОНОК БЕЗ РАСТЯГИВАНИЯ
+        # НАСТРОЙКА КОЛОНОК БЕЗ РАСТЯГИВАНИЯ (кроме последней)
         for col in self.balance_tree["columns"]:
-            self.balance_tree.heading(col, text=col)
-            # stretch=False - колонки НЕ растягиваются на всю ширину
-            self.balance_tree.column(col, anchor=tk.CENTER, width=100, minwidth=80, stretch=False)
+            if col == "":
+                # 🆕 ПОСЛЕДНЯЯ ПУСТАЯ КОЛОНКА - РАСТЯГИВАЕТСЯ И ЗАПОЛНЯЕТ ПРОСТРАНСТВО
+                self.balance_tree.heading(col, text="")
+                self.balance_tree.column(col, anchor=tk.W, width=0, minwidth=0, stretch=True)
+            else:
+                # ОБЫЧНЫЕ КОЛОНКИ - НЕ РАСТЯГИВАЮТСЯ
+                self.balance_tree.heading(col, text=col)
+                self.balance_tree.column(col, anchor=tk.CENTER, width=100, minwidth=80, stretch=False)
 
         self.balance_tree.pack(fill=tk.BOTH, expand=True)
 
@@ -6409,13 +6415,14 @@ class ProductionApp:
                 balance_data[key]["reserved"] += int(row["Зарезервировано"])
                 balance_data[key]["available"] += int(row["Доступно"])
 
-            # Заполняем таблицу с НОВОЙ логикой цветов
+            # Заполняем таблицу с цветовой индикацией
             for (marka, thickness, size), data in sorted(balance_data.items()):
                 total = data["total"]
                 reserved = data["reserved"]
                 available = data["available"]
 
-                values = (marka, thickness, size, total, reserved, available)
+                # 🆕 ДОБАВИЛИ ПУСТУЮ СТРОКУ "" В КОНЕЦ VALUES ДЛЯ КОЛОНКИ-ЗАПОЛНИТЕЛЯ
+                values = (marka, thickness, size, total, reserved, available, "")
 
                 # ЦВЕТОВАЯ ИНДИКАЦИЯ
                 if available < 0:
@@ -6439,7 +6446,7 @@ class ProductionApp:
                         self.balance_excel_filter._all_item_cache = set()
                     self.balance_excel_filter._all_item_cache.add(item_id)
 
-        # АВТОПОДБОР ШИРИНЫ КОЛОН��К С ОГРАНИЧЕНИЯМИ
+        # АВТОПОДБОР ШИРИНЫ КОЛОНОК С ОГРАНИЧЕНИЯМИ (ПРОПУСКАЕМ ПУСТУЮ КОЛОНКУ)
         self.auto_resize_columns(self.balance_tree, min_width=100, max_width=300)
 
         # ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ ПОСЛЕ ЗАГРУЗКИ ДАННЫХ
