@@ -686,7 +686,7 @@ class ProductionApp:
                     "Длина", "Ширина", "Старое кол-во", "Новое кол-во", "Изменение", "Комментарий"
                 ])
 
-            # Генерируем ID лога
+            # Генерируе�� ID лога
             if logs_df.empty:
                 log_id = 1
             else:
@@ -694,6 +694,16 @@ class ProductionApp:
 
             # Вычисляем изменение
             change = new_qty - old_qty
+
+            # 🆕 ПРАВИЛЬНЫЙ ФОРМАТ: число с явным знаком
+            if change > 0:
+                change_str = f"+{change}"
+            elif change < 0:
+                change_str = str(change)  # минус уже есть
+            else:
+                change_str = "0"
+
+            print(f"🔍 Логирование изменения: старое={old_qty}, новое={new_qty}, изменение='{change_str}'")
 
             # Создаём новую запись
             new_log = pd.DataFrame([{
@@ -706,7 +716,7 @@ class ProductionApp:
                 "Ширина": width,
                 "Старое кол-во": old_qty,
                 "Новое кол-во": new_qty,
-                "Изменение": f"{change:+d}",  # Формат: +10 или -5
+                "Изменение": change_str,  # ← СТРОКА С ЗНАКОМ: "+5" или "-3"
                 "Комментарий": comment
             }])
 
@@ -717,7 +727,11 @@ class ProductionApp:
             save_data("MaterialChangeLogs", logs_df)
 
             print(
-                f"✅ Лог изменения записан: ID материала={material_id}, изменение={change:+d}, комментарий='{comment}'")
+                f"✅ Лог изменения записан: ID материала={material_id}, изменение={change_str}, комментарий='{comment}'")
+
+            # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ВКЛАДКИ "История материалов"
+            if hasattr(self, 'material_logs_tree'):
+                self.refresh_material_logs()
 
         except Exception as e:
             print(f"⚠️ Ошибка записи лога изменения материала: {e}")
@@ -728,9 +742,24 @@ class ProductionApp:
         """Вкладка истории изменений количества материалов"""
 
         # Заголовок
-        header = tk.Label(self.material_logs_frame, text="История изменений количества материалов",
-                          font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
-        header.pack(pady=10)
+        header_frame = tk.Frame(self.material_logs_frame, bg='white')
+        header_frame.pack(fill=tk.X, pady=10)
+
+        tk.Label(header_frame, text="История изменений количества материалов",
+                 font=("Arial", 16, "bold"), bg='white', fg='#2c3e50').pack()
+
+        # 🆕 ИНДИКАТОР КОЛИЧЕСТВА ЗАПИСЕЙ
+        self.material_logs_status = tk.Label(
+            header_frame,
+            text="Загрузка...",
+            font=("Arial", 10),
+            bg='#d1ecf1',
+            fg='#0c5460',
+            relief=tk.RIDGE,
+            padx=10,
+            pady=5
+        )
+        self.material_logs_status.pack(pady=5)
 
         # Таблица
         tree_frame = tk.Frame(self.material_logs_frame, bg='white')
@@ -741,7 +770,7 @@ class ProductionApp:
 
         self.material_logs_tree = ttk.Treeview(
             tree_frame,
-            columns=("ID", "Дата", "Материал", "Марка", "Толщина", "Размер",
+            columns=("ID лога", "Дата", "ID материала", "Марка", "Толщина", "Размер",
                      "Старое", "Новое", "Изменение", "Комментарий"),
             show="headings",
             yscrollcommand=scroll_y.set,
@@ -754,8 +783,16 @@ class ProductionApp:
         scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
 
         columns_config = {
-            "ID": 50, "Дата": 140, "Материал": 80, "Марка": 100, "Толщина": 70,
-            "Размер": 110, "Старое": 80, "Новое": 80, "Изменение": 90, "Комментарий": 200
+            "ID лога": 70,
+            "Дата": 140,
+            "ID материала": 90,
+            "Марка": 100,
+            "Толщина": 70,
+            "Размер": 110,
+            "Старое": 80,
+            "Новое": 80,
+            "Изменение": 90,
+            "Комментарий": 250
         }
 
         for col, width in columns_config.items():
@@ -764,10 +801,32 @@ class ProductionApp:
 
         self.material_logs_tree.pack(fill=tk.BOTH, expand=True)
 
-        # Кнопка обновления
-        tk.Button(self.material_logs_frame, text="Обновить", bg='#95a5a6', fg='white',
-                  font=("Arial", 10), command=self.refresh_material_logs).pack(pady=10)
+        # 🆕 ЦВЕТОВАЯ ИНДИКАЦИЯ СТРОК (ЗЕЛЁНЫЙ = ДОБАВЛЕНИЕ, КРАСНЫЙ = УМЕНЬШЕНИЕ)
+        self.material_logs_tree.tag_configure('increase', background='#d4edda')  # Зелёный
+        self.material_logs_tree.tag_configure('decrease', background='#f8d7da')  # Красный
+        self.material_logs_tree.tag_configure('neutral', background='white')
 
+        # Панель фильтрации (опционально)
+        self.material_logs_filters = self.create_filter_panel(
+            self.material_logs_frame,
+            self.material_logs_tree,
+            ["ID лога", "Дата", "ID материала", "Марка", "Толщина", "Комментарий"],
+            self.refresh_material_logs
+        )
+
+        # Кнопки управления
+        buttons_frame = tk.Frame(self.material_logs_frame, bg='white')
+        buttons_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        btn_style = {"font": ("Arial", 10), "width": 15, "height": 2}
+
+        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white',
+                  command=self.refresh_material_logs, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(buttons_frame, text="Экспорт в Excel", bg='#3498db', fg='white',
+                  command=self.export_material_logs, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        # Первоначальная загрузка
         self.refresh_material_logs()
 
     def refresh_material_logs(self):
@@ -783,27 +842,201 @@ class ProductionApp:
                 logs_df = logs_df.sort_values("Дата и время", ascending=False)
 
                 for _, log in logs_df.iterrows():
-                    size_str = f"{log['Длина']}x{log['Ширина']}"
+                    size_str = f"{int(log['Длина'])}x{int(log['Ширина'])}"
 
                     values = (
-                        log["ID материала"],
+                        int(log["ID лога"]),
                         log["Дата и время"],
-                        log["ID лога"],
+                        int(log["ID материала"]),
                         log["Марка"],
                         log["Толщина"],
                         size_str,
-                        log["Старое кол-во"],
-                        log["Новое кол-во"],
+                        int(log["Старое кол-во"]),
+                        int(log["Новое кол-во"]),
                         log["Изменение"],
                         log["Комментарий"]
                     )
 
-                    self.material_logs_tree.insert("", "end", values=values)
+                    # 🆕 ЦВЕТОВАЯ ИНДИКАЦИЯ ПО ИЗМЕНЕНИЮ
+                    change_str = str(log["Изменение"])
+                    if change_str.startswith('+'):
+                        tag = 'increase'  # Зелёный (добавление)
+                    elif change_str.startswith('-'):
+                        tag = 'decrease'  # Красный (уменьшение)
+                    else:
+                        tag = 'neutral'
+
+                    self.material_logs_tree.insert("", "end", values=values, tags=(tag,))
+
+                # 🆕 ОБНОВЛЯЕМ СТАТУС
+                total = len(logs_df)
+                increase_count = len(logs_df[logs_df["Изменение"].str.startswith('+')])
+                decrease_count = len(logs_df[logs_df["Изменение"].str.startswith('-')])
+
+                status_text = (
+                    f"📊 Всего записей: {total} | "
+                    f"🟢 Добавлений: {increase_count} | "
+                    f"🔴 Уменьшений: {decrease_count}"
+                )
+                self.material_logs_status.config(text=status_text, bg='#d1ecf1', fg='#0c5460')
+            else:
+                self.material_logs_status.config(
+                    text="ℹ️ История изменений пуста",
+                    bg='#fff3cd',
+                    fg='#856404'
+                )
 
             self.auto_resize_columns(self.material_logs_tree)
 
         except Exception as e:
             print(f"⚠️ Ошибка загрузки логов: {e}")
+            import traceback
+            traceback.print_exc()
+            self.material_logs_status.config(
+                text=f"❌ Ошибка загрузки: {e}",
+                bg='#f8d7da',
+                fg='#721c24'
+            )
+
+    def export_material_logs(self):
+        """Экспорт истории изменений в Excel"""
+        try:
+            logs_df = load_data("MaterialChangeLogs")
+
+            if logs_df.empty:
+                messagebox.showwarning("Предупреждение", "Нет данных для экспорта!")
+                return
+
+            file_path = filedialog.asksaveasfilename(
+                title="Экспорт истории изменений",
+                defaultextension=".xlsx",
+                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+                initialfile=f"material_changes_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            )
+
+            if not file_path:
+                return
+
+            # Сортируем по дате (старые сверху для Excel)
+            logs_df = logs_df.sort_values("Дата и время", ascending=True)
+
+            # Экспортируем
+            with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+                logs_df.to_excel(writer, index=False, sheet_name='История изменений')
+                worksheet = writer.sheets['История изменений']
+
+                # Автоподбор ширины колонок
+                for column in worksheet.columns:
+                    max_length = 0
+                    column_letter = column[0].column_letter
+                    for cell in column:
+                        try:
+                            if len(str(cell.value)) > max_length:
+                                max_length = len(str(cell.value))
+                        except:
+                            pass
+                    adjusted_width = min(max_length + 2, 50)
+                    worksheet.column_dimensions[column_letter].width = adjusted_width
+
+            messagebox.showinfo("Успех", f"История изменений экспортирована:\n\n{file_path}")
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось экспортировать:\n{e}")
+
+    def refresh_material_logs(self):
+        """Обновление таблицы логов"""
+        for item in self.material_logs_tree.get_children():
+            self.material_logs_tree.delete(item)
+
+        try:
+            logs_df = load_data("MaterialChangeLogs")
+
+            if not logs_df.empty:
+                # 🆕 ДИАГНОСТИКА: проверяем формат данных
+                print(f"🔍 Загружено логов: {len(logs_df)}")
+                if len(logs_df) > 0:
+                    first_change = logs_df.iloc[0]["Изменение"]
+                    print(f"🔍 Первая запись 'Изменение': '{first_change}' (тип: {type(first_change).__name__})")
+
+                # Сортируем по дате (новые сверху)
+                logs_df = logs_df.sort_values("Дата и время", ascending=False)
+
+                # Счётчики
+                increase_count = 0
+                decrease_count = 0
+
+                for _, log in logs_df.iterrows():
+                    size_str = f"{int(log['Длина'])}x{int(log['Ширина'])}"
+
+                    # 🆕 БЕЗОПАСНОЕ ПРЕОБРАЗОВАНИЕ "Изменение" В СТРОКУ
+                    change_value = log["Изменение"]
+
+                    if pd.isna(change_value):
+                        change_str = "0"
+                    else:
+                        change_str = str(change_value).strip()
+
+                    values = (
+                        int(log["ID лога"]),
+                        log["Дата и время"],
+                        int(log["ID материала"]),
+                        log["Марка"],
+                        log["Толщина"],
+                        size_str,
+                        int(log["Старое кол-во"]),
+                        int(log["Новое кол-во"]),
+                        change_str,  # ← ИСПОЛЬЗУЕМ ПРЕОБРАЗОВАННУЮ СТРОКУ
+                        log["Комментарий"]
+                    )
+
+                    # 🆕 ПРАВИЛЬНАЯ ЦВЕТОВАЯ ИНДИКАЦИЯ
+                    try:
+                        # Пробуем распарсить изменение как число
+                        change_num = int(change_str.replace('+', '').replace(' ', ''))
+
+                        if change_num > 0:
+                            tag = 'increase'  # Зелёный (добавление)
+                            increase_count += 1
+                        elif change_num < 0:
+                            tag = 'decrease'  # Красный (уменьшение)
+                            decrease_count += 1
+                        else:
+                            tag = 'neutral'
+                    except:
+                        tag = 'neutral'
+
+                    self.material_logs_tree.insert("", "end", values=values, tags=(tag,))
+
+                # 🆕 ОБНОВЛЯЕМ СТАТУС
+                total = len(logs_df)
+
+                status_text = (
+                    f"📊 Всего записей: {total} | "
+                    f"🟢 Добавлений: {increase_count} | "
+                    f"🔴 Уменьшений: {decrease_count}"
+                )
+
+                print(f"📊 Статистика: всего={total}, добавлений={increase_count}, уменьшений={decrease_count}")
+
+                self.material_logs_status.config(text=status_text, bg='#d1ecf1', fg='#0c5460')
+            else:
+                self.material_logs_status.config(
+                    text="ℹ️ История изменений пуста",
+                    bg='#fff3cd',
+                    fg='#856404'
+                )
+
+            self.auto_resize_columns(self.material_logs_tree)
+
+        except Exception as e:
+            print(f"⚠️ Ошибка загрузки логов: {e}")
+            import traceback
+            traceback.print_exc()
+            self.material_logs_status.config(
+                text=f"❌ Ошибка загрузки: {e}",
+                bg='#f8d7da',
+                fg='#721c24'
+            )
 
     def delete_material(self):
         selected = self.materials_tree.selection()
