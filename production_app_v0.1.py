@@ -323,6 +323,10 @@ class ExcelStyleFilter:
             print(f"\n🔄 Сброс фильтра '{column_id}'")
             if column_id in self.active_filters:
                 del self.active_filters[column_id]
+
+            # 🆕 ОБНОВЛЯЕМ ЗАГОЛОВКИ (УБИРАЕМ ЗНАЧОК)
+            self.update_column_headers()
+
             cleanup_and_close()
             self.refresh_callback()
 
@@ -379,12 +383,32 @@ class ExcelStyleFilter:
         # СОХРАНЯЕМ ВЫБРАННЫЕ ЗНАЧЕНИЯ В АКТИВНЫЕ ФИЛЬТРЫ
         self.active_filters[column_id] = selected_values
 
-        # 🆕 ОКНО УЖЕ ЗАКРЫТО В apply_value_filter(), НЕ ПЫТАЕМСЯ ЗАКРЫТЬ ЕГО ЗДЕСЬ
-        # if window:
-        #     window.destroy()
+        # ОБНОВЛЯЕМ ЗАГОЛОВКИ СТОЛБЦОВ (ДОБАВЛЯЕМ ЗНАЧОК ФИЛЬТРА)
+        self.update_column_headers()
 
         # ВЫЗЫВАЕМ ПОЛНОЕ ОБНОВЛЕНИЕ ДАННЫХ
         self.refresh_callback()
+
+    def update_column_headers(self):
+        """Обновить заголовки столбцов - добавить значок фильтра где активен"""
+        for col in self.tree["columns"]:
+            # Получаем оригинальное название столбца (без значка)
+            original_text = col
+
+            # Если есть активный фильтр для этого столбца - добавляем значок
+            if col in self.active_filters:
+                header_text = f"{original_text} ▼"
+            else:
+                header_text = original_text
+
+            # Обновляем заголовок
+            self.tree.heading(col, text=header_text)
+
+        print(f"📋 Обновлены заголовки. Активные фильтры: {list(self.active_filters.keys())}")
+
+    def update_filter_status(self):
+        """Обновить индикатор активных фильтров"""
+        # ... (остальной код без изменений)
 
     def update_filter_status(self):
         """Обновить индикатор активных фильтров"""
@@ -443,6 +467,10 @@ class ExcelStyleFilter:
                 hidden_count += 1
 
         print(f"✅ Фильтры переприменены: показано {visible_count}, скрыто {hidden_count}")
+
+        # 🆕 ВОССТАНАВЛИВАЕМ ЗНАЧКИ В ЗАГОЛОВКАХ
+        self.update_column_headers()
+
         self.update_filter_status()
 
     def clear_all_filters(self):
@@ -453,6 +481,10 @@ class ExcelStyleFilter:
 
         print(f"🔄 Сброс {len(self.active_filters)} фильтров...")
         self.active_filters = {}
+
+        # 🆕 ОБНОВЛЯЕМ ЗАГОЛОВКИ (УБИРАЕМ ВСЕ ЗНАЧКИ)
+        self.update_column_headers()
+
         self.update_filter_status()
         self.refresh_callback()
 
