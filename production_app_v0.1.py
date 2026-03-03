@@ -26,12 +26,22 @@ def initialize_database():
         order_details_sheet = wb.create_sheet("OrderDetails")
         order_details_sheet.append(["ID", "ID заказа", "Название детали", "Количество", "Порезано", "Погнуто"])
         reservations_sheet = wb.create_sheet("Reservations")
-        reservations_sheet.append(["ID резерва", "ID заказа", "ID детали", "Название детали", "ID материала", "Марка", "Толщина", "Длина", "Ширина", "Зарезервировано штук", "Списано", "Остаток к списанию", "Дата резерва"])
+        reservations_sheet.append(
+            ["ID резерва", "ID заказа", "ID детали", "Название детали", "ID материала", "Марка", "Толщина", "Длина",
+             "Ширина", "Зарезервировано штук", "Списано", "Остаток к списанию", "Дата резерва"])
         writeoffs_sheet = wb.create_sheet("WriteOffs")
         writeoffs_sheet.append([
             "ID списания", "ID резерва", "ID заказа", "ID материала", "Марка", "Толщина", "Длина", "Ширина",
             "Количество", "Дата списания", "Комментарий"
         ])
+
+        # 🆕 ЛИСТ ДЛЯ ЛОГИРОВАНИЯ ИЗМЕНЕНИЙ КОЛИЧЕСТВА МАТЕРИАЛА
+        changelogs_sheet = wb.create_sheet("MaterialChangeLogs")
+        changelogs_sheet.append([
+            "ID лога", "Дата и время", "ID материала", "Марка", "Толщина",
+            "Длина", "Ширина", "Старое кол-во", "Новое кол-во", "Изменение", "Комментарий"
+        ])
+
         wb.save(DATABASE_FILE)
         print(f"База данных '{DATABASE_FILE}' создана!")
 
@@ -121,6 +131,10 @@ class ProductionApp:
         # Загрузка настроек и обработчик закрытия
         self.load_toggle_settings()
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+        self.material_logs_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.material_logs_frame, text="📊 История материалов")
+        self.setup_material_logs_tab()
 
     def create_filter_panel(self, parent_frame, tree_widget, columns_to_filter, refresh_callback):
         """Создание панели фильтрации для любой таблицы"""
@@ -558,17 +572,25 @@ class ProductionApp:
         if not selected:
             messagebox.showwarning("Предупреждение", "Выберите материал для редактирования")
             return
+
         item_id = self.materials_tree.item(selected)["values"][0]
         df = load_data("Materials")
         row = df[df["ID"] == item_id].iloc[0]
+
+        # 🆕 СОХРАНЯЕМ СТАРОЕ КОЛИЧЕСТВО ДЛЯ СРАВНЕНИЯ
+        old_quantity = int(row["Количество штук"])
+
         edit_window = tk.Toplevel(self.root)
         edit_window.title("Редактировать материал")
-        edit_window.geometry("450x500")
+        edit_window.geometry("450x600")  # ← УВЕЛИЧИЛИ ВЫСОТУ ДЛЯ КОММЕНТАРИЯ
         edit_window.configure(bg='#ecf0f1')
+
         tk.Label(edit_window, text="Редактирование материала", font=("Arial", 12, "bold"), bg='#ecf0f1').pack(pady=10)
+
         fields = [("Марка стали:", "Марка"), ("Толщина (мм):", "Толщина"), ("Длина (мм):", "Длина"),
                   ("Ширина (мм):", "Ширина"), ("Количество штук:", "Количество штук")]
         entries = {}
+
         for label_text, key in fields:
             frame = tk.Frame(edit_window, bg='#ecf0f1')
             frame.pack(fill=tk.X, padx=20, pady=5)
@@ -578,31 +600,210 @@ class ProductionApp:
             entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
             entries[key] = entry
 
+        # 🆕 ПОЛЕ ДЛЯ КОММЕНТАРИЯ (ЕСЛИ ИЗМЕНИЛОСЬ КОЛИЧЕСТВО)
+        comment_frame = tk.Frame(edit_window, bg='#ecf0f1')
+        comment_frame.pack(fill=tk.X, padx=20, pady=10)
+        tk.Label(comment_frame, text="Комментарий\n(если меняете кол-во):",
+                 width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.TOP, anchor='w')
+        comment_entry = tk.Text(comment_frame, font=("Arial", 10), height=3, width=40)
+        comment_entry.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=5)
+
         def save_changes():
             try:
                 thickness = float(entries["Толщина"].get())
                 length = float(entries["Длина"].get())
                 width = float(entries["Ширина"].get())
-                quantity = int(entries["Количество штук"].get())
+                new_quantity = int(entries["Количество штук"].get())
                 reserved = int(row["Зарезервировано"])
-                area = (length * width * quantity) / 1000000
+                area = (length * width * new_quantity) / 1000000
+
+                # 🆕 ПРОВЕРКА: ИЗМЕНИЛОСЬ ЛИ КОЛИЧЕСТВО?
+                quantity_changed = (new_quantity != old_quantity)
+
+                if quantity_changed:
+                    comment_text = comment_entry.get("1.0", tk.END).strip()
+
+                    if not comment_text:
+                        response = messagebox.askyesno(
+                            "Комментарий отсутствует",
+                            "Количество изменилось, но комментарий не указан.\n\n"
+                            "Продолжить без комментария?"
+                        )
+                        if not response:
+                            return
+                        comment_text = "(без комментария)"
+
+                    # 🆕 ЗАПИСЫВАЕМ ЛОГ ИЗМЕНЕНИЯ
+                    self.log_material_change(
+                        material_id=item_id,
+                        marka=entries["Марка"].get(),
+                        thickness=thickness,
+                        length=length,
+                        width=width,
+                        old_qty=old_quantity,
+                        new_qty=new_quantity,
+                        comment=comment_text
+                    )
+
+                # СОХРАНЯЕМ ИЗМЕНЕНИЯ В МАТЕРИАЛАХ
                 df.loc[df["ID"] == item_id, "Марка"] = entries["Марка"].get()
                 df.loc[df["ID"] == item_id, "Толщина"] = thickness
                 df.loc[df["ID"] == item_id, "Длина"] = length
                 df.loc[df["ID"] == item_id, "Ширина"] = width
-                df.loc[df["ID"] == item_id, "Количество штук"] = quantity
+                df.loc[df["ID"] == item_id, "Количество штук"] = new_quantity
                 df.loc[df["ID"] == item_id, "Общая площадь"] = round(area, 2)
-                df.loc[df["ID"] == item_id, "Доступно"] = quantity - reserved
+                df.loc[df["ID"] == item_id, "Доступно"] = new_quantity - reserved
+
                 save_data("Materials", df)
                 self.refresh_materials()
                 self.refresh_balance()
                 edit_window.destroy()
-                messagebox.showinfo("Успех", "Материал успешно обновлен!")
+
+                if quantity_changed:
+                    messagebox.showinfo("Успех",
+                                        f"Материал обновлен!\n\n"
+                                        f"Количество изменено: {old_quantity} → {new_quantity}\n"
+                                        f"Изменение: {new_quantity - old_quantity:+d} шт.\n"
+                                        f"Лог записан.")
+                else:
+                    messagebox.showinfo("Успех", "Материал успешно обновлен!")
+
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось обновить материал: {e}")
 
         tk.Button(edit_window, text="Сохранить", bg='#3498db', fg='white', font=("Arial", 12, "bold"),
                   command=save_changes).pack(pady=20)
+
+    def log_material_change(self, material_id, marka, thickness, length, width, old_qty, new_qty, comment):
+        """Логирование изменения количества материала вручную"""
+        try:
+            # Загружаем логи (или создаём пустой DataFrame если листа нет)
+            try:
+                logs_df = load_data("MaterialChangeLogs")
+            except:
+                logs_df = pd.DataFrame(columns=[
+                    "ID лога", "Дата и время", "ID материала", "Марка", "Толщина",
+                    "Длина", "Ширина", "Старое кол-во", "Новое кол-во", "Изменение", "Комментарий"
+                ])
+
+            # Генерируем ID лога
+            if logs_df.empty:
+                log_id = 1
+            else:
+                log_id = int(logs_df["ID лога"].max()) + 1
+
+            # Вычисляем изменение
+            change = new_qty - old_qty
+
+            # Создаём новую запись
+            new_log = pd.DataFrame([{
+                "ID лога": log_id,
+                "Дата и время": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "ID материала": material_id,
+                "Марка": marka,
+                "Толщина": thickness,
+                "Длина": length,
+                "Ширина": width,
+                "Старое кол-во": old_qty,
+                "Новое кол-во": new_qty,
+                "Изменение": f"{change:+d}",  # Формат: +10 или -5
+                "Комментарий": comment
+            }])
+
+            # Добавляем в логи
+            logs_df = pd.concat([logs_df, new_log], ignore_index=True)
+
+            # Сохраняем
+            save_data("MaterialChangeLogs", logs_df)
+
+            print(
+                f"✅ Лог изменения записан: ID материала={material_id}, изменение={change:+d}, комментарий='{comment}'")
+
+        except Exception as e:
+            print(f"⚠️ Ошибка записи лога изменения материала: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def setup_material_logs_tab(self):
+        """Вкладка истории изменений количества материалов"""
+
+        # Заголовок
+        header = tk.Label(self.material_logs_frame, text="История изменений количества материалов",
+                          font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
+        header.pack(pady=10)
+
+        # Таблица
+        tree_frame = tk.Frame(self.material_logs_frame, bg='white')
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
+        scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
+
+        self.material_logs_tree = ttk.Treeview(
+            tree_frame,
+            columns=("ID", "Дата", "Материал", "Марка", "Толщина", "Размер",
+                     "Старое", "Новое", "Изменение", "Комментарий"),
+            show="headings",
+            yscrollcommand=scroll_y.set,
+            xscrollcommand=scroll_x.set
+        )
+
+        scroll_y.config(command=self.material_logs_tree.yview)
+        scroll_x.config(command=self.material_logs_tree.xview)
+        scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
+        scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
+
+        columns_config = {
+            "ID": 50, "Дата": 140, "Материал": 80, "Марка": 100, "Толщина": 70,
+            "Размер": 110, "Старое": 80, "Новое": 80, "Изменение": 90, "Комментарий": 200
+        }
+
+        for col, width in columns_config.items():
+            self.material_logs_tree.heading(col, text=col)
+            self.material_logs_tree.column(col, width=width, anchor=tk.CENTER)
+
+        self.material_logs_tree.pack(fill=tk.BOTH, expand=True)
+
+        # Кнопка обновления
+        tk.Button(self.material_logs_frame, text="Обновить", bg='#95a5a6', fg='white',
+                  font=("Arial", 10), command=self.refresh_material_logs).pack(pady=10)
+
+        self.refresh_material_logs()
+
+    def refresh_material_logs(self):
+        """Обновление таблицы логов"""
+        for item in self.material_logs_tree.get_children():
+            self.material_logs_tree.delete(item)
+
+        try:
+            logs_df = load_data("MaterialChangeLogs")
+
+            if not logs_df.empty:
+                # Сортируем по дате (новые сверху)
+                logs_df = logs_df.sort_values("Дата и время", ascending=False)
+
+                for _, log in logs_df.iterrows():
+                    size_str = f"{log['Длина']}x{log['Ширина']}"
+
+                    values = (
+                        log["ID материала"],
+                        log["Дата и время"],
+                        log["ID лога"],
+                        log["Марка"],
+                        log["Толщина"],
+                        size_str,
+                        log["Старое кол-во"],
+                        log["Новое кол-во"],
+                        log["Изменение"],
+                        log["Комментарий"]
+                    )
+
+                    self.material_logs_tree.insert("", "end", values=values)
+
+            self.auto_resize_columns(self.material_logs_tree)
+
+        except Exception as e:
+            print(f"⚠️ Ошибка загрузки логов: {e}")
 
     def delete_material(self):
         selected = self.materials_tree.selection()
