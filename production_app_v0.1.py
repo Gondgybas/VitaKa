@@ -117,75 +117,38 @@ class ExcelStyleFilter:
 
         print(f"\n🔍 Сбор уникальных значений для столбца '{column_id}' (индекс {column_index}):")
 
-        # 🆕 СОБИРАЕМ ВСЕ ЭЛЕМЕНТЫ (в том числе detached)
-        all_items = self.tree.get_children()  # Видимые
+        # Собираем все видимые элементы
+        visible_items = list(self.tree.get_children(''))
 
-        # Добавляем скрытые элементы
-        try:
-            # Получаем список всех элементов дерева (включая detached)
-            # Для этого используем внутренний API Treeview
-            for item_id in self.tree.get_children(''):
-                values = self.tree.item(item_id)["values"]
-                value = values[column_index]
-                unique_values.add(str(value))
+        # Обновляем кэш всех item_id
+        if not hasattr(self, '_all_item_cache'):
+            self._all_item_cache = set()
 
-            # Также проверяем detached элементы (если есть)
-            # Они хранятся внутри, но не возвращаются get_children()
-            # Обходим это через set() всех созданных элементов
+        # Собираем значения из видимых элементов
+        for item_id in visible_items:
+            self._all_item_cache.add(item_id)
+            values = self.tree.item(item_id)["values"]
+            value = values[column_index]
+            unique_values.add(str(value))
 
-            # Альтернатива: храним исходные данные при первом вызове refresh
-            # Но проще - пересоздадим временно все элементы
-
-        except Exception as e:
-            print(f"⚠️ Ошибка сбора значений: {e}")
-
-        # 🆕 ЕСЛИ ЕСТЬ АКТИВНЫЙ ФИЛЬТР - НУЖНО ВОССТАНОВИТЬ ВСЕ ЭЛЕМЕНТЫ ВРЕМЕННО
-        # для сбора всех уникальных значений
-        currently_detached = []
-
-        # Сначала получаем ВСЕ item_id (включая detached)
-        # Это можно сделать через _item_ids (внутренний атрибут)
-        try:
-            # Сохраняем текущее состояние
-            visible_items = list(self.tree.get_children(''))
-
-            # Временно показываем все элементы
-            # Для этого нужно пройти по всем возможным item_id
-            # В ttk.Treeview нет прямого API для этого, поэтому используем обходной путь:
-
-            # Сохраняем все item_id при первой загрузке данных
-            if not hasattr(self, '_all_item_cache'):
-                self._all_item_cache = set()
-
-            # Обновляем кэш видимыми элементами
-            for item_id in visible_items:
-                self._all_item_cache.add(item_id)
-                values = self.tree.item(item_id)["values"]
-                value = values[column_index]
-                unique_values.add(str(value))
-
-            # Пытаемся восстановить detached элементы из кэша
-            for item_id in self._all_item_cache:
-                if item_id not in visible_items:
-                    try:
-                        # Элемент detached - читаем его значения
-                        values = self.tree.item(item_id)["values"]
-                        if values:  # Проверяем что элемент существует
-                            value = values[column_index]
-                            unique_values.add(str(value))
-                    except:
-                        pass
-
-        except Exception as e:
-            print(f"⚠️ Ошибка работы с detached элементами: {e}")
+        # Собираем значения из скрытых элементов (detached)
+        for item_id in self._all_item_cache:
+            if item_id not in visible_items:
+                try:
+                    values = self.tree.item(item_id)["values"]
+                    if values:
+                        value = values[column_index]
+                        unique_values.add(str(value))
+                except:
+                    pass
 
         unique_values = sorted(unique_values)
 
         print(f"✅ Найдено уникальных значений: {len(unique_values)}")
         print(f"   Примеры: {list(unique_values)[:5]}")
 
-        # 🆕 ОПРЕДЕЛЯЕМ КАКИЕ ЗНАЧЕНИЯ ВЫБРАНЫ (из активного фильтра)
-        currently_selected = self.active_filters.get(column_id, unique_values)
+        # Определяем какие значения выбраны (из активного фильтра)
+        currently_selected = self.active_filters.get(column_id, set(unique_values))
 
         # Создаём всплывающее окно фильтра
         filter_window = tk.Toplevel(self.tree)
@@ -195,7 +158,7 @@ class ExcelStyleFilter:
         filter_window.transient(self.tree)
         filter_window.grab_set()
 
-        # Позиционируем окно под заголовком
+        # Позиционируем о��но под заголовком
         x = event.x_root
         y = event.y_root + 20
         filter_window.geometry(f"+{x}+{y}")
@@ -245,6 +208,36 @@ class ExcelStyleFilter:
         checkboxes_frame = tk.Frame(canvas, bg='white')
         canvas_window = canvas.create_window((0, 0), window=checkboxes_frame, anchor='nw')
 
+        # 🆕 НАСТРОЙКА ПРОКРУТКИ КОЛЕСОМ МЫШИ
+        def _on_mousewheel(e):
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+
+        def _on_mousewheel_linux_up(e):
+            canvas.yview_scroll(-1, "units")
+
+        def _on_mousewheel_linux_down(e):
+            canvas.yview_scroll(1, "units")
+
+        def _bind_to_mousewheel(e):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            canvas.bind_all("<Button-4>", _on_mousewheel_linux_up)
+            canvas.bind_all("<Button-5>", _on_mousewheel_linux_down)
+
+        def _unbind_from_mousewheel(e):
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+
+        canvas.bind('<Enter>', _bind_to_mousewheel)
+        canvas.bind('<Leave>', _unbind_from_mousewheel)
+
+        # Очистка при закрытии окна
+        def cleanup_and_close():
+            _unbind_from_mousewheel(None)
+            filter_window.destroy()
+
+        filter_window.protocol("WM_DELETE_WINDOW", cleanup_and_close)
+
         # Чекбокс "Выбрать всё"
         all_selected = (len(currently_selected) == len(unique_values))
         select_all_var = tk.BooleanVar(value=all_selected)
@@ -265,9 +258,8 @@ class ExcelStyleFilter:
 
         tk.Frame(checkboxes_frame, height=2, bg='#95a5a6').pack(fill=tk.X, padx=5, pady=2)
 
-        # 🆕 Чекбоксы для каждого уникального значения (с учётом текущего фильтра)
+        # Чекбоксы для каждого уникального значения (БЕЗ ДУБЛИРОВАНИЯ)
         for value in unique_values:
-            # Галочка стоит если значение в currently_selected
             is_checked = (value in currently_selected)
             var = tk.BooleanVar(value=is_checked)
             checkbox_vars[value] = var
@@ -275,9 +267,8 @@ class ExcelStyleFilter:
             cb_frame = tk.Frame(checkboxes_frame, bg='white')
             cb_frame.pack(fill=tk.X, padx=2, pady=1)
 
-            cb = tk.Checkbutton(cb_frame, text=value, variable=var,
-                                font=("Arial", 9), bg='white', activebackground='#f0f0f0')
-            cb.pack(anchor='w', padx=10, pady=2)
+            tk.Checkbutton(cb_frame, text=value, variable=var,
+                           font=("Arial", 9), bg='white', activebackground='#f0f0f0').pack(anchor='w', padx=10, pady=2)
 
         # Обновляем размер canvas
         def on_frame_configure(event=None):
@@ -296,14 +287,15 @@ class ExcelStyleFilter:
                 messagebox.showwarning("Предупреждение", "Выберите хотя бы одно значение!")
                 return
 
-            self.apply_filter(column_id, selected_values, filter_window)
+            cleanup_and_close()
+            self.apply_filter(column_id, selected_values, None)
 
         def clear_filter():
             """Очистить фильтр для этого столбца"""
             if column_id in self.active_filters:
                 del self.active_filters[column_id]
+            cleanup_and_close()
             self.refresh_callback()
-            filter_window.destroy()
 
         # Кнопки действий
         buttons_frame = tk.Frame(filter_window, bg='#ecf0f1')
@@ -319,7 +311,7 @@ class ExcelStyleFilter:
                   bg='#e74c3c', fg='white', activebackground='#c0392b',
                   font=("Arial", 10)).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
 
-        tk.Button(buttons_frame, text="Отмена", command=filter_window.destroy,
+        tk.Button(buttons_frame, text="Отмена", command=cleanup_and_close,
                   bg='#95a5a6', fg='white', activebackground='#7f8c8d',
                   font=("Arial", 10)).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
 
@@ -348,47 +340,18 @@ class ExcelStyleFilter:
 
     def apply_filter(self, column_id, selected_values, window):
         """Применить фильтр по значениям"""
+        print(f"🔍 Применяю фильтр для '{column_id}': выбрано {len(selected_values)} значений")
+        print(f"   Выбранные значения: {sorted(list(selected_values))[:5]}...")
+
+        # СОХРАНЯЕМ ВЫБРАННЫЕ ЗНАЧЕНИЯ В АКТИВНЫЕ ФИЛЬТРЫ
         self.active_filters[column_id] = selected_values
 
-        print(f"🔍 Применяем фильтр для '{column_id}': выбрано {len(selected_values)} значений")
-        print(f"   Выбранные значения: {sorted(selected_values)[:5]}...")  # Первые 5 для проверки
+        # 🆕 ОКНО УЖЕ ЗАКРЫТО В apply_value_filter(), НЕ ПЫТАЕМСЯ ЗАКРЫТЬ ЕГО ЗДЕСЬ
+        # if window:
+        #     window.destroy()
 
-        column_index = list(self.tree["columns"]).index(column_id)
-
-        # Скрываем/показываем элементы в соответствии с фильтрами
-        visible_count = 0
-        hidden_count = 0
-
-        for item_id in self.tree.get_children():
-            # Проверяем все активные фильтры
-            show = True
-
-            for col_id, allowed_values in self.active_filters.items():
-                col_index = list(self.tree["columns"]).index(col_id)
-                item_value = self.tree.item(item_id)["values"][col_index]
-
-                # 🆕 ПРЕОБРАЗУЕМ ЗНАЧЕНИЕ В СТРОКУ ДЛЯ СРАВНЕНИЯ
-                item_value_str = str(item_value)
-
-                if item_value_str not in allowed_values:
-                    show = False
-                    break
-
-            if show:
-                # Показываем элемент (сохраняя его позицию и теги)
-                self.tree.reattach(item_id, '', 'end')
-                visible_count += 1
-            else:
-                # Скрываем элемент
-                self.tree.detach(item_id)
-                hidden_count += 1
-
-        print(f"✅ Фильтр применён: показано {visible_count}, скрыто {hidden_count}")
-
-        # Обновляяем индикатор активных фильтров
-        self.update_filter_status()
-
-        window.destroy()
+        # ВЫЗЫВАЕМ ПОЛНОЕ ОБНОВЛЕНИЕ ДАННЫХ
+        self.refresh_callback()
 
     def update_filter_status(self):
         """Обновить индикатор активных фильтров"""
@@ -416,6 +379,7 @@ class ExcelStyleFilter:
     def reapply_all_filters(self):
         """Переприменить все активные фильтры (после обновления данных)"""
         if not self.active_filters:
+            self.update_filter_status()
             return
 
         print(f"🔄 Переприменение {len(self.active_filters)} фильтров...")
@@ -450,18 +414,14 @@ class ExcelStyleFilter:
 
     def clear_all_filters(self):
         """Очистить все фильтры"""
-        self.active_filters = {}
-        self.refresh_callback()
+        if not self.active_filters:
+            print("ℹ️ Нет активных фильтров для сброса")
+            return
 
-        # После применения фильтра обновляем счётчик
-        if hasattr(self.tree.master, 'balance_filter_status'):
-            count = len(self.active_filters)
-            if count > 0:
-                self.tree.master.balance_filter_status.config(
-                    text=f"🔍 Активно фильтров: {count}"
-                )
-            else:
-                self.tree.master.balance_filter_status.config(text="")
+        print(f"🔄 Сброс {len(self.active_filters)} фильтров...")
+        self.active_filters = {}
+        self.update_filter_status()
+        self.refresh_callback()
 
 
 
