@@ -76,6 +76,395 @@ def save_data(sheet_name, dataframe):
         messagebox.showerror("Ошибка", f"Невозможно сохранить данные: {e}")
 
 
+class ExcelStyleFilter:
+    """Фильтр в стиле Excel для Treeview - выпадающее меню при клике на заголовок"""
+
+    def __init__(self, tree, refresh_callback, columns_config=None):
+        """
+        tree: ttk.Treeview виджет
+        refresh_callback: функция обновления данных
+        columns_config: dict с настройками столбцов (опционально)
+        """
+        self.tree = tree
+        self.refresh_callback = refresh_callback
+        self.columns_config = columns_config or {}
+
+        # Хранилище активных фильтров: {column: {'sort': 'asc'/'desc', 'values': set()}}
+        self.active_filters = {}
+
+        # Исходные данные (до фильтрации)
+        self.original_data = []
+
+        # Привязываем клик к заголовкам
+        self.tree.bind('<Button-1>', self.on_header_click)
+
+    def on_header_click(self, event):
+        """Обработка клика по заголовку столбца"""
+        region = self.tree.identify_region(event.x, event.y)
+
+        if region == "heading":
+            column = self.tree.identify_column(event.x)
+            column_id = self.tree.column(column, "id")
+
+            # Показываем меню фильтра
+            self.show_filter_menu(event, column_id)
+
+    def show_filter_menu(self, event, column_id):
+        """Показать меню фильтра для столбца"""
+        # Получаем все уникальные значения в этом столбце (ВКЛЮЧАЯ СКРЫТЫЕ)
+        column_index = list(self.tree["columns"]).index(column_id)
+        unique_values = set()
+
+        print(f"\n🔍 Сбор уникальных значений для столбца '{column_id}' (индекс {column_index}):")
+
+        # 🆕 СОБИРАЕМ ВСЕ ЭЛЕМЕНТЫ (в том числе detached)
+        all_items = self.tree.get_children()  # Видимые
+
+        # Добавляем скрытые элементы
+        try:
+            # Получаем список всех элементов дерева (включая detached)
+            # Для этого используем внутренний API Treeview
+            for item_id in self.tree.get_children(''):
+                values = self.tree.item(item_id)["values"]
+                value = values[column_index]
+                unique_values.add(str(value))
+
+            # Также проверяем detached элементы (если есть)
+            # Они хранятся внутри, но не возвращаются get_children()
+            # Обходим это через set() всех созданных элементов
+
+            # Альтернатива: храним исходные данные при первом вызове refresh
+            # Но проще - пересоздадим временно все элементы
+
+        except Exception as e:
+            print(f"⚠️ Ошибка сбора значений: {e}")
+
+        # 🆕 ЕСЛИ ЕСТЬ АКТИВНЫЙ ФИЛЬТР - НУЖНО ВОССТАНОВИТЬ ВСЕ ЭЛЕМЕНТЫ ВРЕМЕННО
+        # для сбора всех уникальных значений
+        currently_detached = []
+
+        # Сначала получаем ВСЕ item_id (включая detached)
+        # Это можно сделать через _item_ids (внутренний атрибут)
+        try:
+            # Сохраняем текущее состояние
+            visible_items = list(self.tree.get_children(''))
+
+            # Временно показываем все элементы
+            # Для этого нужно пройти по всем возможным item_id
+            # В ttk.Treeview нет прямого API для этого, поэтому используем обходной путь:
+
+            # Сохраняем все item_id при первой загрузке данных
+            if not hasattr(self, '_all_item_cache'):
+                self._all_item_cache = set()
+
+            # Обновляем кэш видимыми элементами
+            for item_id in visible_items:
+                self._all_item_cache.add(item_id)
+                values = self.tree.item(item_id)["values"]
+                value = values[column_index]
+                unique_values.add(str(value))
+
+            # Пытаемся восстановить detached элементы из кэша
+            for item_id in self._all_item_cache:
+                if item_id not in visible_items:
+                    try:
+                        # Элемент detached - читаем его значения
+                        values = self.tree.item(item_id)["values"]
+                        if values:  # Проверяем что элемент существует
+                            value = values[column_index]
+                            unique_values.add(str(value))
+                    except:
+                        pass
+
+        except Exception as e:
+            print(f"⚠️ Ошибка работы с detached элементами: {e}")
+
+        unique_values = sorted(unique_values)
+
+        print(f"✅ Найдено уникальных значений: {len(unique_values)}")
+        print(f"   Примеры: {list(unique_values)[:5]}")
+
+        # 🆕 ОПРЕДЕЛЯЕМ КАКИЕ ЗНАЧЕНИЯ ВЫБРАНЫ (из активного фильтра)
+        currently_selected = self.active_filters.get(column_id, unique_values)
+
+        # Создаём всплывающее окно фильтра
+        filter_window = tk.Toplevel(self.tree)
+        filter_window.title(f"Фильтр: {column_id}")
+        filter_window.geometry("320x500")
+        filter_window.configure(bg='#ecf0f1')
+        filter_window.transient(self.tree)
+        filter_window.grab_set()
+
+        # Позиционируем окно под заголовком
+        x = event.x_root
+        y = event.y_root + 20
+        filter_window.geometry(f"+{x}+{y}")
+
+        # Заголовок
+        header_frame = tk.Frame(filter_window, bg='#3498db')
+        header_frame.pack(fill=tk.X)
+
+        tk.Label(header_frame, text=f"Фильтр: {column_id}",
+                 font=("Arial", 12, "bold"), bg='#3498db', fg='white', pady=10).pack()
+
+        # Кнопки сортировки
+        sort_frame = tk.Frame(filter_window, bg='#ecf0f1')
+        sort_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        tk.Label(sort_frame, text="Сортировка:", font=("Arial", 10, "bold"),
+                 bg='#ecf0f1').pack(anchor='w', pady=(0, 5))
+
+        tk.Button(sort_frame, text="▲ По возрастанию (A→Z, 0→9)",
+                  command=lambda: self.apply_sort(column_id, 'asc', filter_window),
+                  bg='#3498db', fg='white', font=("Arial", 9), relief=tk.RAISED).pack(fill=tk.X, pady=2)
+
+        tk.Button(sort_frame, text="▼ По убыванию (Z→A, 9→0)",
+                  command=lambda: self.apply_sort(column_id, 'desc', filter_window),
+                  bg='#3498db', fg='white', font=("Arial", 9), relief=tk.RAISED).pack(fill=tk.X, pady=2)
+
+        # Разделитель
+        tk.Frame(filter_window, height=2, bg='#95a5a6').pack(fill=tk.X, pady=5)
+
+        tk.Label(filter_window, text="Фильтр по значению:",
+                 font=("Arial", 10, "bold"), bg='#ecf0f1').pack(pady=(5, 5), padx=10, anchor='w')
+
+        # Фрейм со списком значений
+        list_frame = tk.Frame(filter_window, bg='white', relief=tk.SUNKEN, borderwidth=1)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+
+        # Scrollbar
+        scrollbar = tk.Scrollbar(list_frame, orient=tk.VERTICAL)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Canvas для чекбоксов
+        canvas = tk.Canvas(list_frame, bg='white', yscrollcommand=scrollbar.set, highlightthickness=0)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=canvas.yview)
+
+        # Фрейм внутри canvas
+        checkboxes_frame = tk.Frame(canvas, bg='white')
+        canvas_window = canvas.create_window((0, 0), window=checkboxes_frame, anchor='nw')
+
+        # Чекбокс "Выбрать всё"
+        all_selected = (len(currently_selected) == len(unique_values))
+        select_all_var = tk.BooleanVar(value=all_selected)
+        checkbox_vars = {}
+
+        def toggle_all():
+            state = select_all_var.get()
+            for var in checkbox_vars.values():
+                var.set(state)
+
+        select_all_frame = tk.Frame(checkboxes_frame, bg='#e8f4f8')
+        select_all_frame.pack(fill=tk.X, pady=2)
+
+        tk.Checkbutton(select_all_frame, text="✓ Выбрать всё",
+                       variable=select_all_var, command=toggle_all,
+                       font=("Arial", 10, "bold"), bg='#e8f4f8',
+                       activebackground='#d1ecf1').pack(anchor='w', padx=5, pady=5)
+
+        tk.Frame(checkboxes_frame, height=2, bg='#95a5a6').pack(fill=tk.X, padx=5, pady=2)
+
+        # 🆕 Чекбоксы для каждого уникального значения (с учётом текущего фильтра)
+        for value in unique_values:
+            # Галочка стоит если значение в currently_selected
+            is_checked = (value in currently_selected)
+            var = tk.BooleanVar(value=is_checked)
+            checkbox_vars[value] = var
+
+            cb_frame = tk.Frame(checkboxes_frame, bg='white')
+            cb_frame.pack(fill=tk.X, padx=2, pady=1)
+
+            cb = tk.Checkbutton(cb_frame, text=value, variable=var,
+                                font=("Arial", 9), bg='white', activebackground='#f0f0f0')
+            cb.pack(anchor='w', padx=10, pady=2)
+
+        # Обновляем размер canvas
+        def on_frame_configure(event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfig(canvas_window, width=canvas.winfo_width())
+
+        checkboxes_frame.bind("<Configure>", on_frame_configure)
+        canvas.bind("<Configure>", on_frame_configure)
+
+        # Функции для кнопок
+        def apply_value_filter():
+            """Применить фильтр по выбранным значениям"""
+            selected_values = {value for value, var in checkbox_vars.items() if var.get()}
+
+            if not selected_values:
+                messagebox.showwarning("Предупреждение", "Выберите хотя бы одно значение!")
+                return
+
+            self.apply_filter(column_id, selected_values, filter_window)
+
+        def clear_filter():
+            """Очистить фильтр для этого столбца"""
+            if column_id in self.active_filters:
+                del self.active_filters[column_id]
+            self.refresh_callback()
+            filter_window.destroy()
+
+        # Кнопки действий
+        buttons_frame = tk.Frame(filter_window, bg='#ecf0f1')
+        buttons_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+        btn_style = {"font": ("Arial", 10, "bold"), "relief": tk.RAISED, "borderwidth": 2}
+
+        tk.Button(buttons_frame, text="✓ Применить фильтр", command=apply_value_filter,
+                  bg='#27ae60', fg='white', activebackground='#229954',
+                  **btn_style).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+
+        tk.Button(buttons_frame, text="✗ Сбросить фильтр", command=clear_filter,
+                  bg='#e74c3c', fg='white', activebackground='#c0392b',
+                  font=("Arial", 10)).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+
+        tk.Button(buttons_frame, text="Отмена", command=filter_window.destroy,
+                  bg='#95a5a6', fg='white', activebackground='#7f8c8d',
+                  font=("Arial", 10)).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+
+    def apply_sort(self, column_id, direction, window):
+        """Применить сортировку"""
+        column_index = list(self.tree["columns"]).index(column_id)
+
+        # Получаем все элементы
+        items = [(self.tree.item(item_id)["values"], item_id) for item_id in self.tree.get_children()]
+
+        # Сортируем
+        try:
+            # Пробуем числовую сортировку
+            items.sort(key=lambda x: float(str(x[0][column_index]).replace(',', '.')),
+                       reverse=(direction == 'desc'))
+        except:
+            # Если не получилось - текстовая сортировка
+            items.sort(key=lambda x: str(x[0][column_index]).lower(),
+                       reverse=(direction == 'desc'))
+
+        # Переставляем элементы в дереве
+        for index, (values, item_id) in enumerate(items):
+            self.tree.move(item_id, '', index)
+
+        window.destroy()
+
+    def apply_filter(self, column_id, selected_values, window):
+        """Применить фильтр по значениям"""
+        self.active_filters[column_id] = selected_values
+
+        print(f"🔍 Применяем фильтр для '{column_id}': выбрано {len(selected_values)} значений")
+        print(f"   Выбранные значения: {sorted(selected_values)[:5]}...")  # Первые 5 для проверки
+
+        column_index = list(self.tree["columns"]).index(column_id)
+
+        # Скрываем/показываем элементы в соответствии с фильтрами
+        visible_count = 0
+        hidden_count = 0
+
+        for item_id in self.tree.get_children():
+            # Проверяем все активные фильтры
+            show = True
+
+            for col_id, allowed_values in self.active_filters.items():
+                col_index = list(self.tree["columns"]).index(col_id)
+                item_value = self.tree.item(item_id)["values"][col_index]
+
+                # 🆕 ПРЕОБРАЗУЕМ ЗНАЧЕНИЕ В СТРОКУ ДЛЯ СРАВНЕНИЯ
+                item_value_str = str(item_value)
+
+                if item_value_str not in allowed_values:
+                    show = False
+                    break
+
+            if show:
+                # Показываем элемент (сохраняя его позицию и теги)
+                self.tree.reattach(item_id, '', 'end')
+                visible_count += 1
+            else:
+                # Скрываем элемент
+                self.tree.detach(item_id)
+                hidden_count += 1
+
+        print(f"✅ Фильтр применён: показано {visible_count}, скрыто {hidden_count}")
+
+        # Обновляяем индикатор активных фильтров
+        self.update_filter_status()
+
+        window.destroy()
+
+    def update_filter_status(self):
+        """Обновить индикатор активных фильтров"""
+        # Попробуем найти label статуса фильтров
+        try:
+            # Ищем в родительском виджете
+            parent = self.tree.master
+            while parent:
+                if hasattr(parent, 'balance_filter_status'):
+                    count = len(self.active_filters)
+                    if count > 0:
+                        filter_names = ", ".join(self.active_filters.keys())
+                        parent.balance_filter_status.config(
+                            text=f"🔍 Активно фильтров: {count} ({filter_names})",
+                            bg='#d1ecf1',
+                            fg='#0c5460'
+                        )
+                    else:
+                        parent.balance_filter_status.config(text="")
+                    break
+                parent = parent.master if hasattr(parent, 'master') else None
+        except:
+            pass
+
+    def reapply_all_filters(self):
+        """Переприменить все активные фильтры (после обновления данных)"""
+        if not self.active_filters:
+            return
+
+        print(f"🔄 Переприменение {len(self.active_filters)} фильтров...")
+
+        visible_count = 0
+        hidden_count = 0
+
+        for item_id in self.tree.get_children():
+            # Проверяем все активные фильтры
+            show = True
+
+            for col_id, allowed_values in self.active_filters.items():
+                try:
+                    col_index = list(self.tree["columns"]).index(col_id)
+                    item_value = str(self.tree.item(item_id)["values"][col_index])
+
+                    if item_value not in allowed_values:
+                        show = False
+                        break
+                except Exception as e:
+                    print(f"⚠️ Ошибка фильтрации столбца {col_id}: {e}")
+                    continue
+
+            if show:
+                visible_count += 1
+            else:
+                self.tree.detach(item_id)
+                hidden_count += 1
+
+        print(f"✅ Фильтры переприменены: показано {visible_count}, скрыто {hidden_count}")
+        self.update_filter_status()
+
+    def clear_all_filters(self):
+        """Очистить все фильтры"""
+        self.active_filters = {}
+        self.refresh_callback()
+
+        # После применения фильтра обновляем счётчик
+        if hasattr(self.tree.master, 'balance_filter_status'):
+            count = len(self.active_filters)
+            if count > 0:
+                self.tree.master.balance_filter_status.config(
+                    text=f"🔍 Активно фильтров: {count}"
+                )
+            else:
+                self.tree.master.balance_filter_status.config(text="")
+
+
+
 class ProductionApp:
     def __init__(self, root):
         self.root = root
@@ -686,7 +1075,7 @@ class ProductionApp:
                     "Длина", "Ширина", "Старое кол-во", "Новое кол-во", "Изменение", "Комментарий"
                 ])
 
-            # Генерируе�� ID лога
+            # Генерируем ID лога
             if logs_df.empty:
                 log_id = 1
             else:
@@ -4104,7 +4493,7 @@ class ProductionApp:
             order_name = order_row["Название заказа"]
             customer_name = order_row["Заказчик"]
 
-            # Получ��ем детали этого заказа
+            # Получаем детали этого заказа
             order_details = order_details_df[order_details_df["ID заказа"] == order_id]
 
             for _, detail_row in order_details.iterrows():
@@ -5140,7 +5529,7 @@ class ProductionApp:
 
                     print(f"   🔍 Парсинг материала: '{metal_desc}'")
 
-                    # 🆕 ПАТТЕРН 1: Фо��мат с "мм" (4.0мм 1500x3000)
+                    # 🆕 ПАТТЕРН 1: Формат с "мм" (4.0мм 1500x3000)
                     pattern1 = r'(\d+(?:\.\d+)?)\s*мм\s*(\d+(?:\.\d+)?)\s*[xXхХ×]\s*(\d+(?:\.\d+)?)'
                     match1 = re.search(pattern1, metal_desc, re.IGNORECASE)
 
@@ -5891,10 +6280,13 @@ class ProductionApp:
 
     def setup_balance_tab(self):
         """Вкладка баланса материалов"""
-        header = tk.Label(self.balance_frame, text="Баланс материалов",
+
+        # Заголовок
+        header = tk.Label(self.balance_frame, text="Баланс материалов по маркам и толщинам",
                           font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
         header.pack(pady=10)
 
+        # Таблица
         tree_frame = tk.Frame(self.balance_frame, bg='white')
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
@@ -5902,8 +6294,7 @@ class ProductionApp:
         scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
 
         self.balance_tree = ttk.Treeview(tree_frame,
-                                         columns=("Марка", "Толщина", "Размер", "Всего", "Зарезервировано",
-                                                  "Списано", "Доступно", "Площадь"),
+                                         columns=("Марка", "Толщина", "Размер", "Всего", "Зарезервировано", "Доступно"),
                                          show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
 
         scroll_y.config(command=self.balance_tree.yview)
@@ -5911,110 +6302,130 @@ class ProductionApp:
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
 
-        columns_config = {
-            "Марка": 100, "Толщина": 80, "Размер": 120, "Всего": 80,
-            "Зарезервировано": 120, "Списано": 80, "Доступно": 80, "Площадь": 100
-        }
-
+        columns_config = {"Марка": 150, "Толщина": 100, "Размер": 130, "Всего": 100, "Зарезервировано": 150,
+                          "Доступно": 100}
         for col, width in columns_config.items():
             self.balance_tree.heading(col, text=col)
             self.balance_tree.column(col, width=width, anchor=tk.CENTER)
 
         self.balance_tree.pack(fill=tk.BOTH, expand=True)
 
-        # Панель фильтрации
-        self.balance_filters = self.create_filter_panel(
-            self.balance_frame,
-            self.balance_tree,
-            ["Марка", "Толщина", "Размер"],
-            self.refresh_balance
+        # 🆕 ИНИЦИАЛИЗАЦИЯ ФИЛЬТРА В СТИЛЕ EXCEL
+        self.balance_excel_filter = ExcelStyleFilter(
+            tree=self.balance_tree,
+            refresh_callback=self.refresh_balance,
+            columns_config=columns_config
         )
 
-        # Переключатели видимости
-        self.balance_toggles = self.create_visibility_toggles(
-            self.balance_frame,
-            self.balance_tree,
-            {
-                'show_zero_balance': '📦 Показать с нулевым балансом'
-            },
-            self.refresh_balance
-        )
+        # Цветовые теги (сохраняем!)
+        self.balance_tree.tag_configure('normal', background='white')
+        self.balance_tree.tag_configure('low_stock', background='#fff3cd')
+        self.balance_tree.tag_configure('zero_stock', background='#f8d7da')
 
+        # Панель кнопок
         buttons_frame = tk.Frame(self.balance_frame, bg='white')
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
 
-        btn_style = {"font": ("Arial", 10), "width": 15, "height": 2}
+        btn_style = {"font": ("Arial", 10), "width": 18, "height": 2}
 
-        tk.Button(buttons_frame, text="🔄 Обновить", bg='#3498db', fg='white',
+        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white',
                   command=self.refresh_balance, **btn_style).pack(side=tk.LEFT, padx=5)
 
-        tk.Button(buttons_frame, text="📊 Экспорт в Excel", bg='#27ae60', fg='white',
-                  command=self.export_balance, **btn_style).pack(side=tk.LEFT, padx=5)
+        # 🆕 КНОПКА СБРОСА ВСЕХ ФИЛЬТРОВ
+        tk.Button(buttons_frame, text="🔄 Сбросить фильтры", bg='#e67e22', fg='white',
+                  command=self.clear_balance_filters, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        # 🆕 ИНДИКАТОР АКТИВНЫХ ФИЛЬТРОВ
+        self.balance_filter_status = tk.Label(
+            self.balance_frame,
+            text="",
+            font=("Arial", 9),
+            bg='#d1ecf1',
+            fg='#0c5460'
+        )
+        self.balance_filter_status.pack(pady=5)
 
         self.refresh_balance()
 
+    def clear_balance_filters(self):
+        """Сбросить все фильтры баланса"""
+        if hasattr(self, 'balance_excel_filter'):
+            self.balance_excel_filter.clear_all_filters()
+
     def refresh_balance(self):
-        """Обновление баланса материалов"""
-        for item in self.balance_tree.get_children():
-            self.balance_tree.delete(item)
+        """Обновление таблицы баланса материалов"""
 
-        materials_df = load_data("Materials")
-        writeoffs_df = load_data("WriteOffs")
+        # СОХРАНЯЕМ АКТИВНЫЕ ФИЛЬТРЫ ПЕРЕД ОЧИСТКОЙ
+        active_filters_backup = {}
+        if hasattr(self, 'balance_excel_filter') and self.balance_excel_filter.active_filters:
+            active_filters_backup = self.balance_excel_filter.active_filters.copy()
+            print(f"🔍 Сохранены фильтры: {list(active_filters_backup.keys())}")
 
-        if materials_df.empty:
-            return
+        # ПОЛНОСТЬЮ ОЧИЩАЕМ ДЕРЕВО
+        for i in self.balance_tree.get_children():
+            self.balance_tree.delete(i)
 
-        show_zero = True
-        if hasattr(self, 'balance_toggles') and self.balance_toggles:
-            show_zero = self.balance_toggles.get('show_zero_balance', tk.BooleanVar(value=True)).get()
+        # 🆕 ОЧИЩАЕМ КЭШ ЭЛЕМЕНТОВ
+        if hasattr(self, 'balance_excel_filter'):
+            self.balance_excel_filter._all_item_cache = set()
 
-        # Группируем списания по материалам
-        writeoff_summary = {}
-        if not writeoffs_df.empty:
-            for _, row in writeoffs_df.iterrows():
-                mat_id = int(row["ID материала"])
-                qty = int(row["Количество"])
-                writeoff_summary[mat_id] = writeoff_summary.get(mat_id, 0) + qty
+        df = load_data("Materials")
 
-        for _, row in materials_df.iterrows():
-            mat_id = int(row["ID"])
-            total_qty = int(row["Количество штук"])
-            reserved = int(row["Зарезервировано"])
-            available = int(row["Доступно"])
-            written_off = writeoff_summary.get(mat_id, 0)
+        if not df.empty:
+            # Группируем по марке, толщине и размеру
+            balance_data = {}
 
-            # 🆕 Фильтрация по доступному (а не по total_qty)
-            if not show_zero and available == 0:
-                continue
+            for index, row in df.iterrows():
+                marka = row["Марка"]
+                thickness = row["Толщина"]
+                length = row["Длина"]
+                width = row["Ширина"]
+                size_key = f"{int(length)}x{int(width)}"
 
-            size_str = f"{row['Ширина']}x{row['Длина']}"
+                key = (marka, thickness, size_key)
 
-            values = (
-                row["Марка"],
-                row["Толщина"],
-                size_str,
-                total_qty,
-                reserved,
-                written_off,
-                available,
-                row["Общая площадь"]
-            )
+                if key not in balance_data:
+                    balance_data[key] = {
+                        "total": 0,
+                        "reserved": 0,
+                        "available": 0
+                    }
 
-            # 🆕 ЦВЕТОВАЯ ИНДИКАЦИЯ
-            if available < 0:
-                tag = 'negative'  # Отрицательное - красный
-            elif available == 0:
-                tag = 'zero'  # Нулевое - жёлтый
-            else:
-                tag = ''  # Нормальное - без цвета
+                balance_data[key]["total"] += int(row["Количество штук"])
+                balance_data[key]["reserved"] += int(row["Зарезервировано"])
+                balance_data[key]["available"] += int(row["Доступно"])
 
-            self.balance_tree.insert("", "end", values=values, tags=(tag,))
+            # Заполняем таблицу
+            for (marka, thickness, size), data in sorted(balance_data.items()):
+                total = data["total"]
+                reserved = data["reserved"]
+                available = data["available"]
 
-        # 🆕 НАСТРОЙКА ЦВЕТОВ
-        self.balance_tree.tag_configure('negative', background='#ffcccc', foreground='#b71c1c')  # Светло-красный
-        self.balance_tree.tag_configure('zero', background='#fff9c4', foreground='#856404')  # Светло-жёлтый
+                values = (marka, thickness, size, total, reserved, available)
+
+                # Цветовая индикация
+                if available == 0:
+                    tag = 'zero_stock'
+                elif available <= 5:
+                    tag = 'low_stock'
+                else:
+                    tag = 'normal'
+
+                item_id = self.balance_tree.insert("", "end", values=values, tags=(tag,))
+
+                # 🆕 СОХРАНЯЕМ item_id В КЭШ
+                if hasattr(self, 'balance_excel_filter'):
+                    if not hasattr(self.balance_excel_filter, '_all_item_cache'):
+                        self.balance_excel_filter._all_item_cache = set()
+                    self.balance_excel_filter._all_item_cache.add(item_id)
 
         self.auto_resize_columns(self.balance_tree)
+
+        # ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ ПОСЛЕ ЗАГРУЗКИ ДАННЫХ
+        if active_filters_backup and hasattr(self, 'balance_excel_filter'):
+            print(f"🔄 Переприменяю фильтры: {list(active_filters_backup.keys())}")
+            self.balance_excel_filter.active_filters = active_filters_backup
+            self.balance_excel_filter.reapply_all_filters()
 
     def export_balance(self):
         """Экспорт баланса в Excel"""
