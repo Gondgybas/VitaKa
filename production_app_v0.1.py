@@ -111,246 +111,288 @@ class ExcelStyleFilter:
 
     def show_filter_menu(self, event, column_id):
         """Показать меню фильтра для столбца"""
-        column_index = list(self.tree["columns"]).index(column_id)
+        try:
+            column_index = list(self.tree["columns"]).index(column_id)
 
-        # ДВА НАБОРА: все значения (для сохранения выбора) и видимые (для отображения)
-        all_unique_values = set()
-        visible_unique_values = set()
+            # ДВА НАБОРА: все значения (для сохранения выбора) и видимые (для отображения)
+            all_unique_values = set()
+            visible_unique_values = set()
 
-        print(f"\n🔍 Сб��р уникальных значений для столбца '{column_id}' (индекс {column_index}):")
+            print(f"\n🔍 Сбор уникальных значений для столбца '{column_id}' (индекс {column_index}):")
 
-        # Собираем ТОЛЬКО видимые элементы (после других фильтров)
-        visible_items = list(self.tree.get_children(''))
+            # Собираем ТОЛЬКО видимые элементы (после других фильтров)
+            visible_items = list(self.tree.get_children(''))
 
-        print(f"   📊 Всего видимых строк: {len(visible_items)}")
+            print(f"   📊 Всего видимых строк: {len(visible_items)}")
 
-        # Обновляем кэш всех item_id
-        if not hasattr(self, '_all_item_cache'):
-            self._all_item_cache = set()
+            # Обновляем кэш всех item_id
+            if not hasattr(self, '_all_item_cache'):
+                self._all_item_cache = set()
 
-        # Собираем значения из ВИДИМЫХ элементов
-        for item_id in visible_items:
-            self._all_item_cache.add(item_id)
-            values = self.tree.item(item_id)["values"]
-            value = values[column_index]
-            visible_unique_values.add(str(value))
-            all_unique_values.add(str(value))
+            # Собираем значения из ВИДИМЫХ элементов
+            for item_id in visible_items:
+                self._all_item_cache.add(item_id)
+                values = self.tree.item(item_id)["values"]
+                value = values[column_index]
+                visible_unique_values.add(str(value))
+                all_unique_values.add(str(value))
 
-        # Собираем значения из СКРЫТЫХ элементов (для полного списка)
-        for item_id in self._all_item_cache:
-            if item_id not in visible_items:
-                try:
-                    values = self.tree.item(item_id)["values"]
-                    if values:
-                        value = values[column_index]
-                        all_unique_values.add(str(value))
-                except:
-                    pass
+            # Собираем значения из СКРЫТЫХ элементов (для полного списка)
+            for item_id in self._all_item_cache:
+                if item_id not in visible_items:
+                    try:
+                        values = self.tree.item(item_id)["values"]
+                        if values:
+                            value = values[column_index]
+                            all_unique_values.add(str(value))
+                    except:
+                        pass
 
-        # ИСПОЛЬЗУЕМ ТОЛЬКО ВИДИМЫЕ для отображения
-        unique_values = sorted(visible_unique_values)
-
-        print(f"✅ Видимых значений: {len(visible_unique_values)} | Всего: {len(all_unique_values)}")
-        print(f"   Видимые: {unique_values}")
-        print(f"   Все: {sorted(all_unique_values)}")
-
-        # Определяем какие значения выбраны (из активного фильтра)
-        currently_selected = self.active_filters.get(column_id, all_unique_values)
-
-        # Отображаем только пересечение выбранных и видимых
-        currently_selected_visible = currently_selected.intersection(visible_unique_values)
-
-        print(f"   Выбрано ранее: {len(currently_selected)}, из них видимых: {len(currently_selected_visible)}")
-
-        # Создаём всплывающее окно фильтра
-        filter_window = tk.Toplevel(self.tree)
-        filter_window.title(f"Фильтр: {column_id}")
-        filter_window.geometry("320x550")  # Увеличили высоту для кнопок
-        filter_window.configure(bg='#ecf0f1')
-        filter_window.transient(self.tree)
-        filter_window.grab_set()
-
-        # Позиционируем окно под заголовком
-        x = event.x_root
-        y = event.y_root + 20
-        filter_window.geometry(f"+{x}+{y}")
-
-        # Заголовок
-        header_frame = tk.Frame(filter_window, bg='#3498db')
-        header_frame.pack(fill=tk.X)
-
-        tk.Label(header_frame, text=f"Фильтр: {column_id}",
-                 font=("Arial", 12, "bold"), bg='#3498db', fg='white', pady=10).pack()
-
-        # Кнопки сортировки
-        sort_frame = tk.Frame(filter_window, bg='#ecf0f1')
-        sort_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        tk.Label(sort_frame, text="Сортировка:", font=("Arial", 10, "bold"),
-                 bg='#ecf0f1').pack(anchor='w', pady=(0, 5))
-
-        tk.Button(sort_frame, text="▲ По возрастанию (A→Z, 0→9)",
-                  command=lambda: self.apply_sort(column_id, 'asc', filter_window),
-                  bg='#3498db', fg='white', font=("Arial", 9), relief=tk.RAISED).pack(fill=tk.X, pady=2)
-
-        tk.Button(sort_frame, text="▼ По убыванию (Z→A, 9→0)",
-                  command=lambda: self.apply_sort(column_id, 'desc', filter_window),
-                  bg='#3498db', fg='white', font=("Arial", 9), relief=tk.RAISED).pack(fill=tk.X, pady=2)
-
-        # Разделитель
-        tk.Frame(filter_window, height=2, bg='#95a5a6').pack(fill=tk.X, pady=5)
-
-        # Информация о фильтрации
-        if len(visible_unique_values) < len(all_unique_values):
-            hidden_count = len(all_unique_values) - len(visible_unique_values)
-            info_text = f"Показано {len(visible_unique_values)} из {len(all_unique_values)} (скрыто {hidden_count} другими фильтрами)"
-            tk.Label(filter_window, text=info_text, font=("Arial", 8, "italic"),
-                     bg='#fff3cd', fg='#856404', pady=5).pack(fill=tk.X, padx=10, pady=(5, 0))
-
-        tk.Label(filter_window, text="Фильтр по значению:",
-                 font=("Arial", 10, "bold"), bg='#ecf0f1').pack(pady=(5, 5), padx=10, anchor='w')
-
-        # Фрейм со списком значений
-        list_frame = tk.Frame(filter_window, bg='white', relief=tk.SUNKEN, borderwidth=1)
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 5))
-
-        # Scrollbar
-        scrollbar = tk.Scrollbar(list_frame, orient=tk.VERTICAL)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # Canvas для чекбоксов
-        canvas = tk.Canvas(list_frame, bg='white', yscrollcommand=scrollbar.set, highlightthickness=0)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=canvas.yview)
-
-        # Фрейм внутри canvas
-        checkboxes_frame = tk.Frame(canvas, bg='white')
-        canvas_window = canvas.create_window((0, 0), window=checkboxes_frame, anchor='nw')
-
-        # НАСТРОЙКА ПРОКРУТКИ КОЛЕСОМ МЫШИ
-        def _on_mousewheel(e):
-            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
-
-        def _on_mousewheel_linux_up(e):
-            canvas.yview_scroll(-1, "units")
-
-        def _on_mousewheel_linux_down(e):
-            canvas.yview_scroll(1, "units")
-
-        def _bind_to_mousewheel(e):
-            canvas.bind_all("<MouseWheel>", _on_mousewheel)
-            canvas.bind_all("<Button-4>", _on_mousewheel_linux_up)
-            canvas.bind_all("<Button-5>", _on_mousewheel_linux_down)
-
-        def _unbind_from_mousewheel(e):
-            canvas.unbind_all("<MouseWheel>")
-            canvas.unbind_all("<Button-4>")
-            canvas.unbind_all("<Button-5>")
-
-        canvas.bind('<Enter>', _bind_to_mousewheel)
-        canvas.bind('<Leave>', _unbind_from_mousewheel)
-
-        # Очистка при закрытии окна
-        def cleanup_and_close():
-            _unbind_from_mousewheel(None)
-            filter_window.destroy()
-
-        filter_window.protocol("WM_DELETE_WINDOW", cleanup_and_close)
-
-        # Чекбокс "Выбрать всё"
-        all_selected = (len(currently_selected_visible) == len(visible_unique_values))
-        select_all_var = tk.BooleanVar(value=all_selected)
-        checkbox_vars = {}
-
-        def toggle_all():
-            state = select_all_var.get()
-            for var in checkbox_vars.values():
-                var.set(state)
-
-        select_all_frame = tk.Frame(checkboxes_frame, bg='#e8f4f8')
-        select_all_frame.pack(fill=tk.X, pady=2)
-
-        tk.Checkbutton(select_all_frame, text="✓ Выбрать всё",
-                       variable=select_all_var, command=toggle_all,
-                       font=("Arial", 10, "bold"), bg='#e8f4f8',
-                       activebackground='#d1ecf1').pack(anchor='w', padx=5, pady=5)
-
-        tk.Frame(checkboxes_frame, height=2, bg='#95a5a6').pack(fill=tk.X, padx=5, pady=2)
-
-        # Чекбоксы ТОЛЬКО для ВИДИМЫХ значений
-        print(f"   🎛️ Создаём {len(unique_values)} чекбоксов...")
-        for value in unique_values:
-            is_checked = (value in currently_selected_visible)
-            var = tk.BooleanVar(value=is_checked)
-            checkbox_vars[value] = var
-
-            cb_frame = tk.Frame(checkboxes_frame, bg='white')
-            cb_frame.pack(fill=tk.X, padx=2, pady=1)
-
-            tk.Checkbutton(cb_frame, text=value, variable=var,
-                           font=("Arial", 9), bg='white', activebackground='#f0f0f0').pack(anchor='w', padx=10, pady=2)
-
-        print(f"   ✅ Создано чекбоксов: {len(checkbox_vars)}")
-
-        # Обновляем размер canvas
-        def on_frame_configure(event=None):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-            canvas.itemconfig(canvas_window, width=canvas.winfo_width())
-
-        checkboxes_frame.bind("<Configure>", on_frame_configure)
-        canvas.bind("<Configure>", on_frame_configure)
-
-        # ФУНКЦИИ ДЛЯ КНОПОК
-        def apply_value_filter():
-            """Применить фильтр по выбранным значениям"""
-            print(f"\n🔘 Применение фильтра '{column_id}':")
-            print(f"   Доступно чекбоксов: {len(checkbox_vars)}")
-
-            selected_values = {value for value, var in checkbox_vars.items() if var.get()}
-
-            print(f"   Выбрано значений: {len(selected_values)}")
-            print(f"   Значения: {selected_values}")
-
-            if not selected_values:
-                messagebox.showwarning("Предупреждение", "Выберите хотя бы одно значение!")
-                return
-
-            cleanup_and_close()
-            self.apply_filter(column_id, selected_values, None)
-
-        def clear_filter():
-            """Очистить фильтр для этого столбца"""
-            print(f"\n🔄 Сброс фильтра '{column_id}'")
+            # Определяем какие значения выбраны (из активного фильтра)
             if column_id in self.active_filters:
-                del self.active_filters[column_id]
+                currently_selected = self.active_filters[column_id]
+                print(f"   ✅ Фильтр УЖЕ активен для '{column_id}'")
+                print(f"      Выбрано ранее: {sorted(currently_selected)}")
+            else:
+                currently_selected = all_unique_values.copy()
+                print(f"   ℹ️ Фильтр НЕ активен для '{column_id}' - все значения выбраны по умолчанию")
 
-            # 🆕 ОБНОВЛЯЕМ ЗАГОЛОВКИ (УБИРАЕМ ЗНАЧОК)
-            self.update_column_headers()
+            # ВСЕГДА ПОКАЗЫВАЕМ ВСЕ ЗНАЧЕНИЯ
+            values_to_display = all_unique_values
+            unique_values = sorted(values_to_display)
 
-            cleanup_and_close()
-            self.refresh_callback()
+            print(f"   📊 Статистика:")
+            print(f"      Видимых значений: {len(visible_unique_values)}")
+            print(f"      Всего значений: {len(all_unique_values)}")
+            print(f"      Выбранных ранее: {len(currently_selected)}")
+            print(f"      К отображению: {len(values_to_display)}")
+            print(f"   📋 Видимые: {sorted(visible_unique_values)}")
+            print(f"   📋 Выбранные: {sorted(currently_selected)}")
+            print(f"   📋 К показу: {unique_values}")
 
-        # КНОПКИ ДЕЙСТВИЙ
-        print(f"   🔘 Создаём кнопки...")
-        buttons_frame = tk.Frame(filter_window, bg='#ecf0f1')
-        buttons_frame.pack(fill=tk.X, padx=10, pady=10)
+            # Вычисляем невидимые
+            hidden_selected = currently_selected - visible_unique_values
+            hidden_unselected = all_unique_values - currently_selected - visible_unique_values
 
-        btn_style = {"font": ("Arial", 10, "bold"), "relief": tk.RAISED, "borderwidth": 2}
+            if hidden_selected:
+                print(f"   🔴 Невидимые ВЫБРАННЫЕ: {sorted(hidden_selected)}")
+            if hidden_unselected:
+                print(f"   🔴 Невидимые НЕВЫБРАННЫЕ: {sorted(hidden_unselected)}")
 
-        apply_btn = tk.Button(buttons_frame, text="✓ Применить фильтр", command=apply_value_filter,
-                              bg='#27ae60', fg='white', activebackground='#229954', **btn_style)
-        apply_btn.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+            print(f"   🔨 Создаю окно фильтра...")
 
-        clear_btn = tk.Button(buttons_frame, text="✗ Сбросить фильтр", command=clear_filter,
-                              bg='#e74c3c', fg='white', activebackground='#c0392b', font=("Arial", 10))
-        clear_btn.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+            # Создаём всплывающее окно фильтра
+            filter_window = tk.Toplevel(self.tree)
+            filter_window.title(f"Фильтр: {column_id}")
+            filter_window.geometry("320x550")
+            filter_window.configure(bg='#ecf0f1')
+            filter_window.transient(self.tree)
+            filter_window.grab_set()
 
-        cancel_btn = tk.Button(buttons_frame, text="Отмена", command=cleanup_and_close,
-                               bg='#95a5a6', fg='white', activebackground='#7f8c8d', font=("Arial", 10))
-        cancel_btn.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+            print(f"   ✅ Окно создано")
 
-        print(f"   ✅ Кнопки созданы: Применить, Сбросить, Отмена")
-        print(f"   ✅ Окно фильтра готово\n")
+            # Позиционируем окно под заголовком
+            x = event.x_root
+            y = event.y_root + 20
+            filter_window.geometry(f"+{x}+{y}")
+
+            # Заголовок
+            header_frame = tk.Frame(filter_window, bg='#3498db')
+            header_frame.pack(fill=tk.X)
+
+            tk.Label(header_frame, text=f"Фильтр: {column_id}",
+                     font=("Arial", 12, "bold"), bg='#3498db', fg='white', pady=10).pack()
+
+            print(f"   ✅ Заголовок добавлен")
+
+            # Кнопки сортировки
+            sort_frame = tk.Frame(filter_window, bg='#ecf0f1')
+            sort_frame.pack(fill=tk.X, padx=10, pady=10)
+
+            tk.Label(sort_frame, text="Сортировка:", font=("Arial", 10, "bold"),
+                     bg='#ecf0f1').pack(anchor='w', pady=(0, 5))
+
+            tk.Button(sort_frame, text="▲ По возрастанию (A→Z, 0→9)",
+                      command=lambda: self.apply_sort(column_id, 'asc', filter_window),
+                      bg='#3498db', fg='white', font=("Arial", 9), relief=tk.RAISED).pack(fill=tk.X, pady=2)
+
+            tk.Button(sort_frame, text="▼ По убыванию (Z→A, 9→0)",
+                      command=lambda: self.apply_sort(column_id, 'desc', filter_window),
+                      bg='#3498db', fg='white', font=("Arial", 9), relief=tk.RAISED).pack(fill=tk.X, pady=2)
+
+            print(f"   ✅ Кнопки сортировки добавлены")
+
+            # Разделитель
+            tk.Frame(filter_window, height=2, bg='#95a5a6').pack(fill=tk.X, pady=5)
+
+            # Информация о фильтрации
+            hidden_selected_count = len(currently_selected - visible_unique_values)
+
+            if len(visible_unique_values) < len(all_unique_values):
+                hidden_by_filters = len(all_unique_values) - len(visible_unique_values)
+                info_text = f"Показано {len(visible_unique_values)} из {len(all_unique_values)} (скрыто {hidden_by_filters} другими фильтрами)"
+                if hidden_selected_count > 0:
+                    info_text += f"\n+ {hidden_selected_count} ранее выбранных (скрытых)"
+                tk.Label(filter_window, text=info_text, font=("Arial", 8, "italic"),
+                         bg='#fff3cd', fg='#856404', pady=5, justify=tk.LEFT).pack(fill=tk.X, padx=10, pady=(5, 0))
+
+            tk.Label(filter_window, text="Фильтр по значению:",
+                     font=("Arial", 10, "bold"), bg='#ecf0f1').pack(pady=(5, 5), padx=10, anchor='w')
+
+            print(f"   ✅ Информация добавлена")
+
+            # Фрейм со списком значений
+            list_frame = tk.Frame(filter_window, bg='white', relief=tk.SUNKEN, borderwidth=1)
+            list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 5))
+
+            # Scrollbar
+            scrollbar = tk.Scrollbar(list_frame, orient=tk.VERTICAL)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+            # Canvas для чекбоксов
+            canvas = tk.Canvas(list_frame, bg='white', yscrollcommand=scrollbar.set, highlightthickness=0)
+            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scrollbar.config(command=canvas.yview)
+
+            # Фрейм внутри canvas
+            checkboxes_frame = tk.Frame(canvas, bg='white')
+            canvas_window = canvas.create_window((0, 0), window=checkboxes_frame, anchor='nw')
+
+            print(f"   ✅ Canvas создан")
+
+            # НАСТРОЙКА ПРОКРУТКИ КОЛЕСОМ МЫШИ
+            def _on_mousewheel(e):
+                canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+
+            def _on_mousewheel_linux_up(e):
+                canvas.yview_scroll(-1, "units")
+
+            def _on_mousewheel_linux_down(e):
+                canvas.yview_scroll(1, "units")
+
+            def _bind_to_mousewheel(e):
+                canvas.bind_all("<MouseWheel>", _on_mousewheel)
+                canvas.bind_all("<Button-4>", _on_mousewheel_linux_up)
+                canvas.bind_all("<Button-5>", _on_mousewheel_linux_down)
+
+            def _unbind_from_mousewheel(e):
+                canvas.unbind_all("<MouseWheel>")
+                canvas.unbind_all("<Button-4>")
+                canvas.unbind_all("<Button-5>")
+
+            canvas.bind('<Enter>', _bind_to_mousewheel)
+            canvas.bind('<Leave>', _unbind_from_mousewheel)
+
+            # Очистка при закрытии окна
+            def cleanup_and_close():
+                _unbind_from_mousewheel(None)
+                filter_window.destroy()
+
+            filter_window.protocol("WM_DELETE_WINDOW", cleanup_and_close)
+
+            # Чекбокс "Выбрать всё"
+            all_selected = (len(currently_selected.intersection(values_to_display)) == len(values_to_display))
+            select_all_var = tk.BooleanVar(value=all_selected)
+            checkbox_vars = {}
+
+            def toggle_all():
+                state = select_all_var.get()
+                for var in checkbox_vars.values():
+                    var.set(state)
+
+            select_all_frame = tk.Frame(checkboxes_frame, bg='#e8f4f8')
+            select_all_frame.pack(fill=tk.X, pady=2)
+
+            tk.Checkbutton(select_all_frame, text="✓ Выбрать всё",
+                           variable=select_all_var, command=toggle_all,
+                           font=("Arial", 10, "bold"), bg='#e8f4f8',
+                           activebackground='#d1ecf1').pack(anchor='w', padx=5, pady=5)
+
+            tk.Frame(checkboxes_frame, height=2, bg='#95a5a6').pack(fill=tk.X, padx=5, pady=2)
+
+            print(f"   🎛️ Создаю {len(unique_values)} чекбоксов...")
+
+            # Чекбоксы для ВСЕХ значений
+            for value in unique_values:
+                is_checked = (value in currently_selected)
+                is_visible = (value in visible_unique_values)
+
+                var = tk.BooleanVar(value=is_checked)
+                checkbox_vars[value] = var
+
+                bg_color = 'white' if is_visible else '#f8f8f8'
+                cb_frame = tk.Frame(checkboxes_frame, bg=bg_color)
+                cb_frame.pack(fill=tk.X, padx=2, pady=1)
+
+                if not is_visible:
+                    display_text = f"{value} 🔒"
+                    cb = tk.Checkbutton(cb_frame, text=display_text, variable=var,
+                                        font=("Arial", 9, "italic"), bg=bg_color,
+                                        fg='#888', activebackground='#e0e0e0')
+                else:
+                    cb = tk.Checkbutton(cb_frame, text=value, variable=var,
+                                        font=("Arial", 9), bg=bg_color, activebackground='#f0f0f0')
+
+                cb.pack(anchor='w', padx=10, pady=2)
+
+            print(f"   ✅ Создано чекбоксов: {len(checkbox_vars)}")
+
+            # Обновляем размер canvas
+            def on_frame_configure(event=None):
+                canvas.configure(scrollregion=canvas.bbox("all"))
+                canvas.itemconfig(canvas_window, width=canvas.winfo_width())
+
+            checkboxes_frame.bind("<Configure>", on_frame_configure)
+            canvas.bind("<Configure>", on_frame_configure)
+
+            # ФУНКЦИИ ДЛЯ КНОПОК
+            def apply_value_filter():
+                selected_values = {value for value, var in checkbox_vars.items() if var.get()}
+
+                if not selected_values:
+                    messagebox.showwarning("Предупреждение", "Выберите хотя бы одно значение!")
+                    return
+
+                cleanup_and_close()
+                self.apply_filter(column_id, selected_values, None)
+
+            def clear_filter():
+                if column_id in self.active_filters:
+                    del self.active_filters[column_id]
+
+                self.update_column_headers()
+                cleanup_and_close()
+                self.refresh_callback()
+
+            # КНОПКИ ДЕЙСТВИЙ
+            buttons_frame = tk.Frame(filter_window, bg='#ecf0f1')
+            buttons_frame.pack(fill=tk.X, padx=10, pady=10)
+
+            btn_style = {"font": ("Arial", 10, "bold"), "relief": tk.RAISED, "borderwidth": 2}
+
+            tk.Button(buttons_frame, text="✓ Применить фильтр", command=apply_value_filter,
+                      bg='#27ae60', fg='white', activebackground='#229954', **btn_style).pack(side=tk.LEFT, padx=5,
+                                                                                              expand=True, fill=tk.X)
+
+            tk.Button(buttons_frame, text="✗ Сбросить фильтр", command=clear_filter,
+                      bg='#e74c3c', fg='white', activebackground='#c0392b', font=("Arial", 10)).pack(side=tk.LEFT,
+                                                                                                     padx=5,
+                                                                                                     expand=True,
+                                                                                                     fill=tk.X)
+
+            tk.Button(buttons_frame, text="Отмена", command=cleanup_and_close,
+                      bg='#95a5a6', fg='white', activebackground='#7f8c8d', font=("Arial", 10)).pack(side=tk.LEFT,
+                                                                                                     padx=5,
+                                                                                                     expand=True,
+                                                                                                     fill=tk.X)
+
+            print(f"   ✅ Кнопки добавлены")
+            print(f"   ✅ Окно фильтра готово\n")
+
+        except Exception as e:
+            print(f"❌ ОШИБКА в show_filter_menu: {e}")
+            import traceback
+            traceback.print_exc()
 
     def apply_sort(self, column_id, direction, window):
         """Применить сортировку"""
@@ -408,15 +450,10 @@ class ExcelStyleFilter:
 
     def update_filter_status(self):
         """Обновить индикатор активных фильтров"""
-        # ... (остальной код без изменений)
-
-    def update_filter_status(self):
-        """Обновить индикатор активных фильтров"""
-        # Попробуем найти label статуса фильтров
         try:
-            # Ищем в родительском виджете
             parent = self.tree.master
             while parent:
+                # Для баланса материалов
                 if hasattr(parent, 'balance_filter_status'):
                     count = len(self.active_filters)
                     if count > 0:
@@ -429,6 +466,35 @@ class ExcelStyleFilter:
                     else:
                         parent.balance_filter_status.config(text="")
                     break
+
+                # Для заказов
+                if hasattr(parent, 'orders_filter_status'):
+                    count = len(self.active_filters)
+                    if count > 0:
+                        filter_names = ", ".join(self.active_filters.keys())
+                        parent.orders_filter_status.config(
+                            text=f"🔍 Активно фильтров: {count} ({filter_names})",
+                            bg='#d1ecf1',
+                            fg='#0c5460'
+                        )
+                    else:
+                        parent.orders_filter_status.config(text="")
+                    break
+
+                # Для деталей заказа
+                if hasattr(parent, 'order_details_filter_status'):
+                    count = len(self.active_filters)
+                    if count > 0:
+                        filter_names = ", ".join(self.active_filters.keys())
+                        parent.order_details_filter_status.config(
+                            text=f"🔍 Активно фильтров: {count} ({filter_names})",
+                            bg='#d1ecf1',
+                            fg='#0c5460'
+                        )
+                    else:
+                        parent.order_details_filter_status.config(text="")
+                    break
+
                 parent = parent.master if hasattr(parent, 'master') else None
         except:
             pass
@@ -1494,30 +1560,55 @@ class ProductionApp:
         header = tk.Label(self.orders_frame, text="Управление заказами", font=("Arial", 16, "bold"), bg='white',
                           fg='#2c3e50')
         header.pack(pady=10)
+
+        # ========== ТАБЛИЦА ЗАКАЗОВ ==========
         orders_label = tk.Label(self.orders_frame, text="Список заказов", font=("Arial", 12, "bold"), bg='white')
         orders_label.pack(pady=5)
-        tree_frame = tk.Frame(self.orders_frame, bg='white')
-        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
-        self.orders_tree = ttk.Treeview(tree_frame,
+
+        # Контейнер для центрирования таблицы заказов
+        orders_center_container = tk.Frame(self.orders_frame, bg='white')
+        orders_center_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        orders_left_spacer = tk.Frame(orders_center_container, bg='#f0f0f0')
+        orders_left_spacer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        orders_tree_frame = tk.Frame(orders_center_container, bg='white', relief=tk.RIDGE, borderwidth=1)
+        orders_tree_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False)
+
+        orders_right_spacer = tk.Frame(orders_center_container, bg='#f0f0f0')
+        orders_right_spacer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scroll_y = tk.Scrollbar(orders_tree_frame, orient=tk.VERTICAL)
+        scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.orders_tree = ttk.Treeview(orders_tree_frame,
                                         columns=("ID", "Название", "Заказчик", "Дата", "Статус", "Примечания"),
                                         show="headings", yscrollcommand=scroll_y.set, height=8)
         scroll_y.config(command=self.orders_tree.yview)
-        scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
-        columns_config = {"ID": 80, "Название": 200, "Заказчик": 150, "Дата": 100, "Статус": 100, "Примечания": 200}
-        for col, width in columns_config.items():
+
+        # Настройка колонок БЕЗ растягивания
+        for col in self.orders_tree["columns"]:
             self.orders_tree.heading(col, text=col)
-            self.orders_tree.column(col, width=width, anchor=tk.CENTER)
+            self.orders_tree.column(col, anchor=tk.CENTER, width=100, minwidth=80, stretch=False)
+
         self.orders_tree.pack(fill=tk.BOTH, expand=True)
         self.orders_tree.bind('<<TreeviewSelect>>', self.on_order_select)
 
-        # Панель фильтрации заказов
-        self.orders_filters = self.create_filter_panel(
-            self.orders_frame,
-            self.orders_tree,
-            ["ID", "Название", "Заказчик", "Статус"],
-            self.refresh_orders
+        # 🆕 ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ ЗАКАЗОВ
+        self.orders_excel_filter = ExcelStyleFilter(
+            tree=self.orders_tree,
+            refresh_callback=self.refresh_orders
         )
+
+        # ИНДИКАТОР АКТИВНЫХ ФИЛЬТРОВ (ЗАКАЗЫ)
+        self.orders_filter_status = tk.Label(
+            self.orders_frame,
+            text="",
+            font=("Arial", 9),
+            bg='#d1ecf1',
+            fg='#0c5460'
+        )
+        self.orders_filter_status.pack(pady=5)
 
         # Переключатели видимости заказов
         self.orders_toggles = self.create_visibility_toggles(
@@ -1530,9 +1621,11 @@ class ProductionApp:
             self.refresh_orders
         )
 
+        # Кнопки управления заказами
         buttons_frame = tk.Frame(self.orders_frame, bg='white')
         buttons_frame.pack(fill=tk.X, padx=10, pady=5)
         btn_style = {"font": ("Arial", 10), "width": 15, "height": 2}
+
         tk.Button(buttons_frame, text="Добавить заказ", bg='#27ae60', fg='white', command=self.add_order,
                   **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(buttons_frame, text="Импорт из Excel", bg='#9b59b6', fg='white', command=self.import_orders,
@@ -1543,55 +1636,109 @@ class ProductionApp:
                   **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(buttons_frame, text="Удалить заказ", bg='#e74c3c', fg='white', command=self.delete_order,
                   **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_orders,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="✖ Сбросить фильтры", bg='#e67e22', fg='white',
+                  command=self.clear_orders_filters, **btn_style).pack(side=tk.LEFT, padx=5)
 
-        details_label = tk.Label(self.orders_frame,
-                                 text="Детали выбранного заказа (дважды кликните «Порезано» или «Погнуто» для редактирования)",
-                                 font=("Arial", 11, "bold"), bg='white', fg='#2c3e50')
+        # ========== ТАБЛИЦА ДЕТАЛЕЙ ЗАКАЗА ==========
+        details_label = tk.Label(self.orders_frame, text="Детали выбранного заказа", font=("Arial", 12, "bold"),
+                                bg='white')
         details_label.pack(pady=5)
-        details_tree_frame = tk.Frame(self.orders_frame, bg='white')
-        details_tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # Контейнер для центрирования таблицы деталей
+        details_center_container = tk.Frame(self.orders_frame, bg='white')
+        details_center_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        details_left_spacer = tk.Frame(details_center_container, bg='#f0f0f0')
+        details_left_spacer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        details_tree_frame = tk.Frame(details_center_container, bg='white', relief=tk.RIDGE, borderwidth=1)
+        details_tree_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False)
+
+        details_right_spacer = tk.Frame(details_center_container, bg='#f0f0f0')
+        details_right_spacer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
         scroll_y2 = tk.Scrollbar(details_tree_frame, orient=tk.VERTICAL)
+        scroll_y2.pack(side=tk.RIGHT, fill=tk.Y)
+
         self.order_details_tree = ttk.Treeview(details_tree_frame,
-                                               columns=("ID", "ID заказа", "Название детали", "Количество", "Порезано",
-                                                        "Погнуто"),
+                                               columns=("ID", "ID заказа", "Название детали", "Количество", "Порезано", "Погнуто"),
                                                show="headings", yscrollcommand=scroll_y2.set)
         scroll_y2.config(command=self.order_details_tree.yview)
-        scroll_y2.pack(side=tk.RIGHT, fill=tk.Y)
-        for col in ["ID", "ID заказа", "Название детали", "Количество", "Порезано", "Погнуто"]:
-            self.order_details_tree.heading(col, text=col)
-            self.order_details_tree.column(col, width=150, anchor=tk.CENTER)
-        self.order_details_tree.pack(fill=tk.BOTH, expand=True)
 
-        # Привязываем двойной клик для редактирования
+        # Настройка колонок БЕЗ растягивания
+        for col in self.order_details_tree["columns"]:
+            self.order_details_tree.heading(col, text=col)
+            self.order_details_tree.column(col, anchor=tk.CENTER, width=100, minwidth=80, stretch=False)
+
+        self.order_details_tree.pack(fill=tk.BOTH, expand=True)
         self.order_details_tree.bind('<Double-1>', self.on_detail_double_click)
 
-        # Панель фильтрации деталей
-        self.order_details_filters = self.create_filter_panel(
-            self.orders_frame,
-            self.order_details_tree,
-            ["Название детали", "Количество"],
-            self.refresh_order_details
+        # 🆕 ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ ДЕТАЛЕЙ
+        self.order_details_excel_filter = ExcelStyleFilter(
+            tree=self.order_details_tree,
+            refresh_callback=self.refresh_order_details
         )
 
+        # ИНДИКАТОР АКТИВНЫХ ФИЛЬТРОВ (ДЕТАЛИ)
+        self.order_details_filter_status = tk.Label(
+            self.orders_frame,
+            text="",
+            font=("Arial", 9),
+            bg='#d1ecf1',
+            fg='#0c5460'
+        )
+        self.order_details_filter_status.pack(pady=5)
+
+        # Кнопки управления деталями
         details_buttons_frame = tk.Frame(self.orders_frame, bg='white')
         details_buttons_frame.pack(fill=tk.X, padx=10, pady=5)
+
         tk.Button(details_buttons_frame, text="Добавить деталь", bg='#27ae60', fg='white',
                   command=self.add_order_detail, **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(details_buttons_frame, text="Редактировать деталь", bg='#f39c12', fg='white',
                   command=self.edit_order_detail, **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(details_buttons_frame, text="Удалить деталь", bg='#e74c3c', fg='white',
                   command=self.delete_order_detail, **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(details_buttons_frame, text="✖ Сбросить фильтры", bg='#e67e22', fg='white',
+                  command=self.clear_order_details_filters, **btn_style).pack(side=tk.LEFT, padx=5)
+
         self.refresh_orders()
+
+    def clear_orders_filters(self):
+        """Сбросить все фильтры заказов"""
+        if hasattr(self, 'orders_excel_filter'):
+            self.orders_excel_filter.clear_all_filters()
+
+    def clear_order_details_filters(self):
+        """Сбросить все фильтры деталей заказа"""
+        if hasattr(self, 'order_details_excel_filter'):
+            self.order_details_excel_filter.clear_all_filters()
+
+    def on_order_select(self, event):
+        self.refresh_order_details()
 
     def on_order_select(self, event):
         self.refresh_order_details()
 
     def refresh_orders(self):
+        """Обновление списка заказов"""
+
+        # СОХРАНЯЕМ АКТИВНЫЕ ФИЛЬТРЫ ПЕРЕД ОЧИСТКОЙ
+        active_filters_backup = {}
+        if hasattr(self, 'orders_excel_filter') and self.orders_excel_filter.active_filters:
+            active_filters_backup = self.orders_excel_filter.active_filters.copy()
+            print(f"🔍 Сохранены фильтры заказов: {list(active_filters_backup.keys())}")
+
+        # ПОЛНОСТЬЮ ОЧИЩАЕМ ДЕРЕВО
         for i in self.orders_tree.get_children():
             self.orders_tree.delete(i)
+
+        # ОЧИЩАЕМ КЭШ ЭЛЕМЕНТОВ
+        if hasattr(self, 'orders_excel_filter'):
+            self.orders_excel_filter._all_item_cache = set()
+
         df = load_data("Orders")
+
         if not df.empty:
             show_completed = True
             show_cancelled = True
@@ -1608,67 +1755,116 @@ class ProductionApp:
                 if not show_cancelled and status == "Отменен":
                     continue
 
-                values = [row["ID заказа"], row["Название заказа"], row["Заказчик"],
-                          row["Дата создания"], row["Статус"], row["Примечания"]]
-                self.orders_tree.insert("", "end", values=values)
-                self.auto_resize_columns(self.orders_tree)
+                values = (row["ID заказа"], row["Название заказа"], row["Заказчик"],
+                          row["Дата создания"], row["Статус"], row["Примечания"])
+
+                item_id = self.orders_tree.insert("", "end", values=values)
+
+                # СОХРАНЯЕМ item_id В КЭШ
+                if hasattr(self, 'orders_excel_filter'):
+                    if not hasattr(self.orders_excel_filter, '_all_item_cache'):
+                        self.orders_excel_filter._all_item_cache = set()
+                    self.orders_excel_filter._all_item_cache.add(item_id)
+
+        # АВТОПОДБОР ШИРИНЫ КОЛОНОК
+        self.auto_resize_columns(self.orders_tree, min_width=100, max_width=300)
+
+        # ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ ПОСЛЕ ЗАГРУЗКИ ДАННЫХ
+        if active_filters_backup and hasattr(self, 'orders_excel_filter'):
+            print(f"🔄 Переприменяю фильтры заказов: {list(active_filters_backup.keys())}")
+            self.orders_excel_filter.active_filters = active_filters_backup
+            self.orders_excel_filter.reapply_all_filters()
 
     def refresh_order_details(self):
+        """Обновление деталей выбранного заказа"""
+
+        print(f"\n🔍 refresh_order_details вызван")
+
+        # СОХРАНЯЕМ АКТИВНЫЕ ФИЛЬТРЫ ПЕРЕД ОЧИСТКОЙ
+        active_filters_backup = {}
+        if hasattr(self, 'order_details_excel_filter') and self.order_details_excel_filter.active_filters:
+            active_filters_backup = self.order_details_excel_filter.active_filters.copy()
+            print(f"   Сохранены фильтры деталей: {list(active_filters_backup.keys())}")
+
+        # ПОЛНОСТЬЮ ОЧИЩАЕМ ДЕРЕВО
         for i in self.order_details_tree.get_children():
             self.order_details_tree.delete(i)
 
+        # ОЧИЩАЕМ КЭШ ЭЛЕМЕНТОВ
+        if hasattr(self, 'order_details_excel_filter'):
+            self.order_details_excel_filter._all_item_cache = set()
+
         selected = self.orders_tree.selection()
-
-        # ЗАЩИТА: Если ничего не выбрано или выбрано несколько - выходим
-        if not selected or len(selected) != 1:
+        if not selected:
+            print(f"   ❌ Заказ не выбран")
             return
 
-        try:
-            order_id = self.orders_tree.item(selected[0])["values"][0]
-        except (IndexError, KeyError, tk.TclError):
-            # Если не удалось получить ID - выходим
-            return
+        order_id = self.orders_tree.item(selected[0])["values"][0]
+        print(f"   ✅ Выбран заказ ID: {order_id}")
 
         df = load_data("OrderDetails")
+        print(f"   📊 Загружено деталей всего: {len(df)}")
 
         if not df.empty:
-            # Настраиваем теги для цветовой индикации
-            self.order_details_tree.tag_configure('completed', background='#c8e6c9')  # Зеленый - завершено
-            self.order_details_tree.tag_configure('in_progress', background='#fff9c4')  # Желтый - в процессе
-            self.order_details_tree.tag_configure('not_started', background='#ffcccc')  # Красный - не начато
+            # 🆕 ДИАГНОСТИКА: ПОКАЗЫВАЕМ КОЛОНКИ
+            print(f"   📋 Колонки OrderDetails: {list(df.columns)}")
 
-            order_details = df[df["ID заказа"] == order_id]
-            for index, row in order_details.iterrows():
-                # Безопасное получение значений с обработкой пустых строк
-                cut_raw = row.get("Порезано", 0) if "Порезано" in row else 0
-                bent_raw = row.get("Погнуто", 0) if "Погнуто" in row else 0
-
-                # Преобразуем в int с защитой от пустых строк
-                try:
-                    cut = int(cut_raw) if cut_raw != '' and pd.notna(cut_raw) else 0
-                except (ValueError, TypeError):
-                    cut = 0
-
-                try:
-                    bent = int(bent_raw) if bent_raw != '' and pd.notna(bent_raw) else 0
-                except (ValueError, TypeError):
-                    bent = 0
-
-                qty = int(row["Количество"])
-
-                values = (row["ID"], row["ID заказа"], row["Название детали"], qty, cut, bent)
-
-                # Определяем статус выполнения
-                if bent == qty and qty > 0:
-                    tag = 'completed'  # Все детали погнуты = готово
-                elif cut > 0 or bent > 0:
-                    tag = 'in_progress'  # Что-то порезано или погнуто = в работе
+            # Фильтруем детали по ID заказа (используем iloc[1] - вторая колонка)
+            try:
+                details = df[df.iloc[:, 1] == order_id]
+            except:
+                # Попытка по названию колонки
+                if "ID заказа" in df.columns:
+                    details = df[df["ID заказа"] == order_id]
                 else:
-                    tag = 'not_started'  # Ничего не сделано
+                    details = pd.DataFrame()  # Пустой DataFrame
 
-                self.order_details_tree.insert("", "end", values=values, tags=(tag,))
+            print(f"   📊 Деталей для заказа {order_id}: {len(details)}")
 
-            self.auto_resize_columns(self.order_details_tree)
+            for index, row in details.iterrows():
+                # 🆕 ИСПОЛЬЗУЕМ ИНДЕКСЫ КОЛОНОК (НАДЁЖНО)
+                try:
+                    detail_id = row.iloc[0]  # ID детали
+                    order_id_val = row.iloc[1]  # ID заказа
+                    detail_name = row.iloc[2]  # Название детали
+                    quantity = row.iloc[3]  # Количество
+                    cut = row.iloc[4] if len(row) > 4 else 0  # Порезано
+                    bent = row.iloc[5] if len(row) > 5 else 0  # Погнуто
+
+                    values = (detail_id, order_id_val, detail_name, quantity, cut, bent)
+
+                    print(f"      ✅ Вставка детали: {values}")
+                    item_id = self.order_details_tree.insert("", "end", values=values)
+
+                    # СОХРАНЯЕМ item_id В КЭШ
+                    if hasattr(self, 'order_details_excel_filter'):
+                        if not hasattr(self.order_details_excel_filter, '_all_item_cache'):
+                            self.order_details_excel_filter._all_item_cache = set()
+                        self.order_details_excel_filter._all_item_cache.add(item_id)
+
+                except Exception as e:
+                    print(f"      ⚠️ Ошибка чтения детали {index}: {e}")
+                    continue
+        else:
+            print(f"   ❌ DataFrame OrderDetails пуст")
+
+        # Проверяем сколько элементов в дереве
+        visible_items = self.order_details_tree.get_children()
+        print(f"   📊 Видимых элементов в дереве: {len(visible_items)}")
+
+        # АВТОПОДБОР ШИРИНЫ КОЛОНОК
+        self.auto_resize_columns(self.order_details_tree, min_width=100, max_width=300)
+
+        # ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ ПОСЛЕ ЗАГРУЗКИ ДАННЫХ
+        if active_filters_backup and hasattr(self, 'order_details_excel_filter'):
+            print(f"   🔄 Переприменяю фильтры деталей: {list(active_filters_backup.keys())}")
+            self.order_details_excel_filter.active_filters = active_filters_backup
+            self.order_details_excel_filter.reapply_all_filters()
+
+        # Финальная проверка
+        final_visible = self.order_details_tree.get_children()
+        print(f"   ✅ Итого видимых элементов: {len(final_visible)}\n")
+
 
     def on_detail_double_click(self, event):
         """Обработка двойного клика по детали для редактирования прямо в таблице"""
@@ -6341,7 +6537,7 @@ class ProductionApp:
         left_spacer = tk.Frame(center_container, bg='#f0f0f0')
         left_spacer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # 🆕 ТАБЛИЦА В ЦЕН��РЕ (РАСТЯГИВАЕТСЯ ТОЛЬКО ПО ВЫСОТЕ, НЕ ПО ШИРИНЕ)
+        # 🆕 ТАБЛИЦА В ЦЕНТРЕ (РАСТЯГИВАЕТСЯ ТОЛЬКО ПО ВЫСОТЕ, НЕ ПО ШИРИНЕ)
         tree_frame = tk.Frame(center_container, bg='white', relief=tk.RIDGE, borderwidth=1)
         tree_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False)
 
