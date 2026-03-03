@@ -639,7 +639,6 @@ class ProductionApp:
                 optimal_width = max(min_width, min(max_content_width, max_width))
                 tree.column(col, width=int(optimal_width))
 
-                print(f"📏 Колонка '{col}': {int(optimal_width)}px")
 
         except Exception as e:
             print(f"⚠️ Ошибка автоподбора ширины колонок: {e}")
