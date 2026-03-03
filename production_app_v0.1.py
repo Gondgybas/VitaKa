@@ -111,54 +111,66 @@ class ExcelStyleFilter:
 
     def show_filter_menu(self, event, column_id):
         """Показать меню фильтра для столбца"""
-        # Получаем все уникальные значения в этом столбце (ВКЛЮЧАЯ СКРЫТЫЕ)
         column_index = list(self.tree["columns"]).index(column_id)
-        unique_values = set()
 
-        print(f"\n🔍 Сбор уникальных значений для столбца '{column_id}' (индекс {column_index}):")
+        # ДВА НАБОРА: все значения (для сохранения выбора) и видимые (для отображения)
+        all_unique_values = set()
+        visible_unique_values = set()
 
-        # Собираем все видимые элементы
+        print(f"\n🔍 Сб��р уникальных значений для столбца '{column_id}' (индекс {column_index}):")
+
+        # Собираем ТОЛЬКО видимые элементы (после других фильтров)
         visible_items = list(self.tree.get_children(''))
+
+        print(f"   📊 Всего видимых строк: {len(visible_items)}")
 
         # Обновляем кэш всех item_id
         if not hasattr(self, '_all_item_cache'):
             self._all_item_cache = set()
 
-        # Собираем значения из видимых элементов
+        # Собираем значения из ВИДИМЫХ элементов
         for item_id in visible_items:
             self._all_item_cache.add(item_id)
             values = self.tree.item(item_id)["values"]
             value = values[column_index]
-            unique_values.add(str(value))
+            visible_unique_values.add(str(value))
+            all_unique_values.add(str(value))
 
-        # Собираем значения из скрытых элементов (detached)
+        # Собираем значения из СКРЫТЫХ элементов (для полного списка)
         for item_id in self._all_item_cache:
             if item_id not in visible_items:
                 try:
                     values = self.tree.item(item_id)["values"]
                     if values:
                         value = values[column_index]
-                        unique_values.add(str(value))
+                        all_unique_values.add(str(value))
                 except:
                     pass
 
-        unique_values = sorted(unique_values)
+        # ИСПОЛЬЗУЕМ ТОЛЬКО ВИДИМЫЕ для отображения
+        unique_values = sorted(visible_unique_values)
 
-        print(f"✅ Найдено уникальных значений: {len(unique_values)}")
-        print(f"   Примеры: {list(unique_values)[:5]}")
+        print(f"✅ Видимых значений: {len(visible_unique_values)} | Всего: {len(all_unique_values)}")
+        print(f"   Видимые: {unique_values}")
+        print(f"   Все: {sorted(all_unique_values)}")
 
         # Определяем какие значения выбраны (из активного фильтра)
-        currently_selected = self.active_filters.get(column_id, set(unique_values))
+        currently_selected = self.active_filters.get(column_id, all_unique_values)
+
+        # Отображаем только пересечение выбранных и видимых
+        currently_selected_visible = currently_selected.intersection(visible_unique_values)
+
+        print(f"   Выбрано ранее: {len(currently_selected)}, из них видимых: {len(currently_selected_visible)}")
 
         # Создаём всплывающее окно фильтра
         filter_window = tk.Toplevel(self.tree)
         filter_window.title(f"Фильтр: {column_id}")
-        filter_window.geometry("320x500")
+        filter_window.geometry("320x550")  # Увеличили высоту для кнопок
         filter_window.configure(bg='#ecf0f1')
         filter_window.transient(self.tree)
         filter_window.grab_set()
 
-        # Позиционируем о��но под заголовком
+        # Позиционируем окно под заголовком
         x = event.x_root
         y = event.y_root + 20
         filter_window.geometry(f"+{x}+{y}")
@@ -188,12 +200,19 @@ class ExcelStyleFilter:
         # Разделитель
         tk.Frame(filter_window, height=2, bg='#95a5a6').pack(fill=tk.X, pady=5)
 
+        # Информация о фильтрации
+        if len(visible_unique_values) < len(all_unique_values):
+            hidden_count = len(all_unique_values) - len(visible_unique_values)
+            info_text = f"Показано {len(visible_unique_values)} из {len(all_unique_values)} (скрыто {hidden_count} другими фильтрами)"
+            tk.Label(filter_window, text=info_text, font=("Arial", 8, "italic"),
+                     bg='#fff3cd', fg='#856404', pady=5).pack(fill=tk.X, padx=10, pady=(5, 0))
+
         tk.Label(filter_window, text="Фильтр по значению:",
                  font=("Arial", 10, "bold"), bg='#ecf0f1').pack(pady=(5, 5), padx=10, anchor='w')
 
         # Фрейм со списком значений
         list_frame = tk.Frame(filter_window, bg='white', relief=tk.SUNKEN, borderwidth=1)
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 5))
 
         # Scrollbar
         scrollbar = tk.Scrollbar(list_frame, orient=tk.VERTICAL)
@@ -208,7 +227,7 @@ class ExcelStyleFilter:
         checkboxes_frame = tk.Frame(canvas, bg='white')
         canvas_window = canvas.create_window((0, 0), window=checkboxes_frame, anchor='nw')
 
-        # 🆕 НАСТРОЙКА ПРОКРУТКИ КОЛЕСОМ МЫШИ
+        # НАСТРОЙКА ПРОКРУТКИ КОЛЕСОМ МЫШИ
         def _on_mousewheel(e):
             canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
 
@@ -239,7 +258,7 @@ class ExcelStyleFilter:
         filter_window.protocol("WM_DELETE_WINDOW", cleanup_and_close)
 
         # Чекбокс "Выбрать всё"
-        all_selected = (len(currently_selected) == len(unique_values))
+        all_selected = (len(currently_selected_visible) == len(visible_unique_values))
         select_all_var = tk.BooleanVar(value=all_selected)
         checkbox_vars = {}
 
@@ -258,9 +277,10 @@ class ExcelStyleFilter:
 
         tk.Frame(checkboxes_frame, height=2, bg='#95a5a6').pack(fill=tk.X, padx=5, pady=2)
 
-        # Чекбоксы для каждого уникального значения (БЕЗ ДУБЛИРОВАНИЯ)
+        # Чекбоксы ТОЛЬКО для ВИДИМЫХ значений
+        print(f"   🎛️ Создаём {len(unique_values)} чекбоксов...")
         for value in unique_values:
-            is_checked = (value in currently_selected)
+            is_checked = (value in currently_selected_visible)
             var = tk.BooleanVar(value=is_checked)
             checkbox_vars[value] = var
 
@@ -270,6 +290,8 @@ class ExcelStyleFilter:
             tk.Checkbutton(cb_frame, text=value, variable=var,
                            font=("Arial", 9), bg='white', activebackground='#f0f0f0').pack(anchor='w', padx=10, pady=2)
 
+        print(f"   ✅ Создано чекбоксов: {len(checkbox_vars)}")
+
         # Обновляем размер canvas
         def on_frame_configure(event=None):
             canvas.configure(scrollregion=canvas.bbox("all"))
@@ -278,10 +300,16 @@ class ExcelStyleFilter:
         checkboxes_frame.bind("<Configure>", on_frame_configure)
         canvas.bind("<Configure>", on_frame_configure)
 
-        # Функции для кнопок
+        # ФУНКЦИИ ДЛЯ КНОПОК
         def apply_value_filter():
             """Применить фильтр по выбранным значениям"""
+            print(f"\n🔘 Применение фильтра '{column_id}':")
+            print(f"   Доступно чекбоксов: {len(checkbox_vars)}")
+
             selected_values = {value for value, var in checkbox_vars.items() if var.get()}
+
+            print(f"   Выбрано значений: {len(selected_values)}")
+            print(f"   Значения: {selected_values}")
 
             if not selected_values:
                 messagebox.showwarning("Предупреждение", "Выберите хотя бы одно значение!")
@@ -292,28 +320,33 @@ class ExcelStyleFilter:
 
         def clear_filter():
             """Очистить фильтр для этого столбца"""
+            print(f"\n🔄 Сброс фильтра '{column_id}'")
             if column_id in self.active_filters:
                 del self.active_filters[column_id]
             cleanup_and_close()
             self.refresh_callback()
 
-        # Кнопки действий
+        # КНОПКИ ДЕЙСТВИЙ
+        print(f"   🔘 Создаём кнопки...")
         buttons_frame = tk.Frame(filter_window, bg='#ecf0f1')
-        buttons_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        buttons_frame.pack(fill=tk.X, padx=10, pady=10)
 
         btn_style = {"font": ("Arial", 10, "bold"), "relief": tk.RAISED, "borderwidth": 2}
 
-        tk.Button(buttons_frame, text="✓ Применить фильтр", command=apply_value_filter,
-                  bg='#27ae60', fg='white', activebackground='#229954',
-                  **btn_style).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+        apply_btn = tk.Button(buttons_frame, text="✓ Применить фильтр", command=apply_value_filter,
+                              bg='#27ae60', fg='white', activebackground='#229954', **btn_style)
+        apply_btn.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
 
-        tk.Button(buttons_frame, text="✗ Сбросить фильтр", command=clear_filter,
-                  bg='#e74c3c', fg='white', activebackground='#c0392b',
-                  font=("Arial", 10)).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+        clear_btn = tk.Button(buttons_frame, text="✗ Сбросить фильтр", command=clear_filter,
+                              bg='#e74c3c', fg='white', activebackground='#c0392b', font=("Arial", 10))
+        clear_btn.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
 
-        tk.Button(buttons_frame, text="Отмена", command=cleanup_and_close,
-                  bg='#95a5a6', fg='white', activebackground='#7f8c8d',
-                  font=("Arial", 10)).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+        cancel_btn = tk.Button(buttons_frame, text="Отмена", command=cleanup_and_close,
+                               bg='#95a5a6', fg='white', activebackground='#7f8c8d', font=("Arial", 10))
+        cancel_btn.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+
+        print(f"   ✅ Кнопки созданы: Применить, Сбросить, Отмена")
+        print(f"   ✅ Окно фильтра готово\n")
 
     def apply_sort(self, column_id, direction, window):
         """Применить сортировку"""
