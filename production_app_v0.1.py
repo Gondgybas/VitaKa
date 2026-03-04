@@ -709,7 +709,7 @@ class ProductionApp:
 
         return toggle_vars
 
-    def auto_resize_columns(self, tree, min_width=80, max_width=400):
+    def auto_resize_columns(self, tree, min_width=80, max_width=None):  # ← None вместо 400
         """Автоматический подбор ширины колонок по содержимому"""
         try:
             import tkinter.font as tkfont
@@ -740,7 +740,11 @@ class ProductionApp:
                         continue
 
                 # Применяем ограничения
-                optimal_width = max(min_width, min(max_content_width, max_width))
+                if max_width is not None:  # ← Добавить проверку
+                    optimal_width = max(min_width, min(max_content_width, max_width))
+                else:
+                    optimal_width = max(min_width, max_content_width)
+
                 tree.column(col, width=int(optimal_width))
 
                 print(f"📏 Колонка '{col}': {int(optimal_width)}px")
@@ -2713,46 +2717,44 @@ class ProductionApp:
         header = tk.Label(self.reservations_frame, text="Резервирование материалов", font=("Arial", 16, "bold"),
                           bg='white', fg='#2c3e50')
         header.pack(pady=10)
+
         tree_frame = tk.Frame(self.reservations_frame, bg='white')
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
         scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
         scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
+
         self.reservations_tree = ttk.Treeview(tree_frame,
                                               columns=("ID", "Заказчик | Заказ", "Деталь", "Материал", "Марка",
-                                                       "Толщина",
-                                                       "Размер", "Резерв", "Списано", "Остаток", "Дата"),
+                                                       "Толщина", "Размер", "Резерв", "Списано", "Остаток", "Дата"),
                                               show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
         scroll_y.config(command=self.reservations_tree.yview)
         scroll_x.config(command=self.reservations_tree.xview)
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
-        columns_widths = {
-            "ID": 60,
-            "Заказчик | Заказ": 250,
-            "Деталь": 150,
-            "Материал": 80,
-            "Марка": 100,
-            "Толщина": 80,
-            "Размер": 120,
-            "Резерв": 80,
-            "Списано": 80,
-            "Остаток": 80,
-            "Дата": 100
-        }
 
+        # Настройка колонок БЕЗ растягивания
         for col in self.reservations_tree["columns"]:
             self.reservations_tree.heading(col, text=col)
-            width = columns_widths.get(col, 110)
-            self.reservations_tree.column(col, width=width, anchor=tk.CENTER)
+            self.reservations_tree.column(col, anchor=tk.CENTER, width=100, minwidth=80, stretch=False)
+
         self.reservations_tree.pack(fill=tk.BOTH, expand=True)
 
-        # Панель фильтрации
-        self.reservations_filters = self.create_filter_panel(
-            self.reservations_frame,
-            self.reservations_tree,
-            ["ID", "Заказчик | Заказ", "Деталь", "Марка", "Толщина", "Резерв", "Списано", "Остаток"],
-            self.refresh_reservations
+        # 🆕 ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ РЕЗЕРВИРОВАНИЯ
+        self.reservations_excel_filter = ExcelStyleFilter(
+            tree=self.reservations_tree,
+            refresh_callback=self.refresh_reservations
         )
+
+        # 🆕 ИНДИКАТОР АКТИВНЫХ ФИЛЬТРОВ
+        self.reservations_filter_status = tk.Label(
+            self.reservations_frame,
+            text="",
+            font=("Arial", 9),
+            bg='#d1ecf1',
+            fg='#0c5460'
+        )
+        self.reservations_filter_status.pack(pady=5)
 
         # Переключатели видимости
         self.reservations_toggles = self.create_visibility_toggles(
@@ -2764,9 +2766,11 @@ class ProductionApp:
             self.refresh_reservations
         )
 
+        # Кнопки управления
         buttons_frame = tk.Frame(self.reservations_frame, bg='white')
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
         btn_style = {"font": ("Arial", 10), "width": 18, "height": 2}
+
         tk.Button(buttons_frame, text="Зарезервировать", bg='#27ae60', fg='white', command=self.add_reservation,
                   **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(buttons_frame, text="Удалить резерв", bg='#e74c3c', fg='white', command=self.delete_reservation,
@@ -2779,6 +2783,7 @@ class ProductionApp:
                   **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(buttons_frame, text="✖ Сбросить фильтры", bg='#e67e22', fg='white',
                   command=self.clear_reservations_filters, **btn_style).pack(side=tk.LEFT, padx=5)
+
         self.refresh_reservations()
 
     def clear_reservations_filters(self):
@@ -2793,7 +2798,6 @@ class ProductionApp:
         active_filters_backup = {}
         if hasattr(self, 'reservations_excel_filter') and self.reservations_excel_filter.active_filters:
             active_filters_backup = self.reservations_excel_filter.active_filters.copy()
-            print(f"🔍 Сохранены фильтры резервов: {list(active_filters_backup.keys())}")
 
         # ПОЛНОСТЬЮ ОЧИЩАЕМ ДЕРЕВО
         for i in self.reservations_tree.get_children():
@@ -2854,12 +2858,11 @@ class ProductionApp:
                         self.reservations_excel_filter._all_item_cache = set()
                     self.reservations_excel_filter._all_item_cache.add(item_id)
 
-        # АВТОПОДБОР ШИРИНЫ КОЛОНОК
-        self.auto_resize_columns(self.reservations_tree, min_width=80, max_width=250)
+        # ✅ АВТОПОДБОР ШИРИНЫ КОЛОНОК (ДОЛЖЕН БЫТЬ ЗДЕСЬ!)
+        self.auto_resize_columns(self.reservations_tree, min_width=80, max_width=400)
 
         # ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ ПОСЛЕ ЗАГРУЗКИ ДАННЫХ
         if active_filters_backup and hasattr(self, 'reservations_excel_filter'):
-            print(f"🔄 Переприменяю фильтры резервов: {list(active_filters_backup.keys())}")
             self.reservations_excel_filter.active_filters = active_filters_backup
             self.reservations_excel_filter.reapply_all_filters()
 
