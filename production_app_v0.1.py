@@ -1456,13 +1456,21 @@ class ProductionApp:
         self.material_logs_tree.tag_configure('decrease', background='#f8d7da')  # Красный
         self.material_logs_tree.tag_configure('neutral', background='white')
 
-        # Панель фильтрации (опционально)
-        self.material_logs_filters = self.create_filter_panel(
-            self.material_logs_frame,
-            self.material_logs_tree,
-            ["ID лога", "Дата", "ID материала", "Марка", "Толщина", "Комментарий"],
-            self.refresh_material_logs
+        # 🆕 ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ РЕЗЕРВИРОВАНИЯ
+        self.reservations_excel_filter = ExcelStyleFilter(
+            tree=self.reservations_tree,
+            refresh_callback=self.refresh_reservations
         )
+
+        # 🆕 ИНДИКАТОР АКТИВНЫХ ФИЛЬТРОВ
+        self.reservations_filter_status = tk.Label(
+            self.reservations_frame,
+            text="",
+            font=("Arial", 9),
+            bg='#d1ecf1',
+            fg='#0c5460'
+        )
+        self.reservations_filter_status.pack(pady=5)
 
         # Кнопки управления
         buttons_frame = tk.Frame(self.material_logs_frame, bg='white')
@@ -2769,11 +2777,31 @@ class ProductionApp:
                   **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(buttons_frame, text="Задание на лазер", bg='#e67e22', fg='white', command=self.export_laser_task,
                   **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="✖ Сбросить фильтры", bg='#e67e22', fg='white',
+                  command=self.clear_reservations_filters, **btn_style).pack(side=tk.LEFT, padx=5)
         self.refresh_reservations()
 
+    def clear_reservations_filters(self):
+        """Сбросить все фильтры резервирования"""
+        if hasattr(self, 'reservations_excel_filter'):
+            self.reservations_excel_filter.clear_all_filters()
+
     def refresh_reservations(self):
+        """Обновление списка резервов"""
+
+        # СОХРАНЯЕМ АКТИВНЫЕ ФИЛЬТРЫ ПЕРЕД ОЧИСТКОЙ
+        active_filters_backup = {}
+        if hasattr(self, 'reservations_excel_filter') and self.reservations_excel_filter.active_filters:
+            active_filters_backup = self.reservations_excel_filter.active_filters.copy()
+            print(f"🔍 Сохранены фильтры резервов: {list(active_filters_backup.keys())}")
+
+        # ПОЛНОСТЬЮ ОЧИЩАЕМ ДЕРЕВО
         for i in self.reservations_tree.get_children():
             self.reservations_tree.delete(i)
+
+        # ОЧИЩАЕМ КЭШ ЭЛЕМЕНТОВ
+        if hasattr(self, 'reservations_excel_filter'):
+            self.reservations_excel_filter._all_item_cache = set()
 
         reservations_df = load_data("Reservations")
         orders_df = load_data("Orders")
@@ -2806,7 +2834,7 @@ class ProductionApp:
 
                 values = [
                     row["ID резерва"],
-                    order_display,  # Вместо ID заказа показываем "Заказчик | Название"
+                    order_display,
                     detail_name,
                     row["ID материала"],
                     row["Марка"],
@@ -2818,9 +2846,22 @@ class ProductionApp:
                     row["Дата резерва"]
                 ]
 
-                self.reservations_tree.insert("", "end", values=values)
+                item_id = self.reservations_tree.insert("", "end", values=values)
 
-            self.auto_resize_columns(self.reservations_tree)
+                # СОХРАНЯЕМ item_id В КЭШ
+                if hasattr(self, 'reservations_excel_filter'):
+                    if not hasattr(self.reservations_excel_filter, '_all_item_cache'):
+                        self.reservations_excel_filter._all_item_cache = set()
+                    self.reservations_excel_filter._all_item_cache.add(item_id)
+
+        # АВТОПОДБОР ШИРИНЫ КОЛОНОК
+        self.auto_resize_columns(self.reservations_tree, min_width=80, max_width=250)
+
+        # ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ ПОСЛЕ ЗАГРУЗКИ ДАННЫХ
+        if active_filters_backup and hasattr(self, 'reservations_excel_filter'):
+            print(f"🔄 Переприменяю фильтры резервов: {list(active_filters_backup.keys())}")
+            self.reservations_excel_filter.active_filters = active_filters_backup
+            self.reservations_excel_filter.reapply_all_filters()
 
     def add_reservation(self):
         orders_df = load_data("Orders")
