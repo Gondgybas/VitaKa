@@ -510,6 +510,20 @@ class ExcelStyleFilter:
         try:
             parent = self.tree.master
             while parent:
+                # Для материалов
+                if hasattr(parent, 'materials_filter_status'):
+                    count = len(self.active_filters)
+                    if count > 0:
+                        filter_names = ", ".join(self.active_filters.keys())
+                        parent.materials_filter_status.config(
+                            text=f"🔍 Активно фильтров: {count} ({filter_names})",
+                            bg='#d1ecf1',
+                            fg='#0c5460'
+                        )
+                    else:
+                        parent.materials_filter_status.config(text="")
+                    break
+
                 # Для баланса материалов
                 if hasattr(parent, 'balance_filter_status'):
                     count = len(self.active_filters)
@@ -907,10 +921,13 @@ class ProductionApp:
         header = tk.Label(self.materials_frame, text="Учет листового проката на складе",
                           font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
         header.pack(pady=10)
+
         tree_frame = tk.Frame(self.materials_frame, bg='white')
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
         scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
         scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
+
         self.materials_tree = ttk.Treeview(tree_frame,
                                            columns=("ID", "Марка", "Толщина", "Длина", "Ширина", "Кол-во шт", "Площадь",
                                                     "Резерв", "Доступно", "Дата"),
@@ -919,20 +936,29 @@ class ProductionApp:
         scroll_x.config(command=self.materials_tree.xview)
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
-        columns_config = {"ID": 50, "Марка": 100, "Толщина": 80, "Длина": 80, "Ширина": 80,
-                          "Кол-во шт": 80, "Площадь": 100, "Резерв": 80, "Доступно": 80, "Дата": 100}
-        for col, width in columns_config.items():
-            self.materials_tree.heading(col, text=col)
-            self.materials_tree.column(col, width=width, anchor=tk.CENTER)
-        self.materials_tree.pack(fill=tk.BOTH, expand=True)
 
-        # Панель фильтрации
-        self.materials_filters = self.create_filter_panel(
-            self.materials_frame,
-            self.materials_tree,
-            ["ID", "Марка", "Толщина", "Длина", "Ширина", "Кол-во шт", "Резерв", "Доступно"],
-            self.refresh_materials
+        # НАСТРОЙКА КОЛОНОК БЕЗ РАСТЯГИВАНИЯ
+        for col in self.materials_tree["columns"]:
+            self.materials_tree.heading(col, text=col)
+            self.materials_tree.column(col, anchor=tk.CENTER, width=100, minwidth=80, stretch=False)
+
+        self.materials_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # 🆕 ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ МАТЕРИАЛОВ
+        self.materials_excel_filter = ExcelStyleFilter(
+            tree=self.materials_tree,
+            refresh_callback=self.refresh_materials
         )
+
+        # 🆕 ИНДИКАТОР АКТИВНЫХ ФИЛЬТРОВ
+        self.materials_filter_status = tk.Label(
+            self.materials_frame,
+            text="",
+            font=("Arial", 9),
+            bg='#d1ecf1',
+            fg='#0c5460'
+        )
+        self.materials_filter_status.pack(pady=5)
 
         # Переключатели видимости
         self.materials_toggles = self.create_visibility_toggles(
@@ -948,6 +974,7 @@ class ProductionApp:
         buttons_frame = tk.Frame(self.materials_frame, bg='white')
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
         btn_style = {"font": ("Arial", 10), "width": 15, "height": 2}
+
         tk.Button(buttons_frame, text="Добавить", bg='#27ae60', fg='white', command=self.add_material,
                   **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(buttons_frame, text="Импорт из Excel", bg='#9b59b6', fg='white', command=self.import_materials,
@@ -958,14 +985,35 @@ class ProductionApp:
                   **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(buttons_frame, text="Удалить", bg='#e74c3c', fg='white', command=self.delete_material,
                   **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_materials,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="✖ Сбросить фильтры", bg='#e67e22', fg='white',
+                  command=self.clear_materials_filters, **btn_style).pack(side=tk.LEFT, padx=5)
+
         self.refresh_materials()
 
+    def clear_materials_filters(self):
+        """Сбросить все фильтры материалов"""
+        if hasattr(self, 'materials_excel_filter'):
+            self.materials_excel_filter.clear_all_filters()
+
     def refresh_materials(self):
+        """Обновление списка материалов"""
+
+        # СОХРАНЯЕМ АКТИВНЫЕ ФИЛЬТРЫ ПЕРЕД ОЧИСТКОЙ
+        active_filters_backup = {}
+        if hasattr(self, 'materials_excel_filter') and self.materials_excel_filter.active_filters:
+            active_filters_backup = self.materials_excel_filter.active_filters.copy()
+            print(f"🔍 Сохранены фильтры материалов: {list(active_filters_backup.keys())}")
+
+        # ПОЛНОСТЬЮ ОЧИЩАЕМ ДЕРЕВО
         for i in self.materials_tree.get_children():
             self.materials_tree.delete(i)
+
+        # ОЧИЩАЕМ КЭШ ЭЛЕМЕНТОВ
+        if hasattr(self, 'materials_excel_filter'):
+            self.materials_excel_filter._all_item_cache = set()
+
         df = load_data("Materials")
+
         if not df.empty:
             show_zero_stock = True
             show_zero_available = True
@@ -975,20 +1023,34 @@ class ProductionApp:
                 show_zero_available = self.materials_toggles.get('show_zero_available', tk.BooleanVar(value=True)).get()
 
             for index, row in df.iterrows():
-                qty = int(row["Количество штук"])
-                available = int(row["Доступно"])
+                quantity = int(row["Количество штук"]) if row["Количество штук"] else 0
+                available = int(row["Доступно"]) if row["Доступно"] else 0
 
-                if not show_zero_stock and qty == 0:
+                if not show_zero_stock and quantity == 0:
                     continue
                 if not show_zero_available and available == 0:
                     continue
 
-                values = [row["ID"], row["Марка"], row["Толщина"], row["Длина"], row["Ширина"],
+                values = (row["ID"], row["Марка"], row["Толщина"], row["Длина"], row["Ширина"],
                           row["Количество штук"], row["Общая площадь"], row["Зарезервировано"],
-                          row["Доступно"], row["Дата добавления"]]
-                self.materials_tree.insert("", "end", values=values)
+                          row["Доступно"], row["Дата добавления"])
 
-        self.auto_resize_columns(self.materials_tree)
+                item_id = self.materials_tree.insert("", "end", values=values)
+
+                # СОХРАНЯЕМ item_id В КЭШ
+                if hasattr(self, 'materials_excel_filter'):
+                    if not hasattr(self.materials_excel_filter, '_all_item_cache'):
+                        self.materials_excel_filter._all_item_cache = set()
+                    self.materials_excel_filter._all_item_cache.add(item_id)
+
+        # АВТОПОДБОР ШИРИНЫ КОЛОНОК
+        self.auto_resize_columns(self.materials_tree, min_width=80, max_width=200)
+
+        # ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ ПОСЛЕ ЗАГРУЗКИ ДАННЫХ
+        if active_filters_backup and hasattr(self, 'materials_excel_filter'):
+            print(f"🔄 Переприменяю фильтры материалов: {list(active_filters_backup.keys())}")
+            self.materials_excel_filter.active_filters = active_filters_backup
+            self.materials_excel_filter.reapply_all_filters()
 
     def download_template(self):
         file_path = filedialog.asksaveasfilename(title="Сохранить шаблон", defaultextension=".xlsx",
@@ -1622,18 +1684,9 @@ class ProductionApp:
         orders_label = tk.Label(self.orders_frame, text="Список заказов", font=("Arial", 12, "bold"), bg='white')
         orders_label.pack(pady=5)
 
-        # Контейнер для центрирования таблицы заказов
-        orders_center_container = tk.Frame(self.orders_frame, bg='white')
-        orders_center_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-        orders_left_spacer = tk.Frame(orders_center_container, bg='#f0f0f0')
-        orders_left_spacer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        orders_tree_frame = tk.Frame(orders_center_container, bg='white', relief=tk.RIDGE, borderwidth=1)
-        orders_tree_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False)
-
-        orders_right_spacer = tk.Frame(orders_center_container, bg='#f0f0f0')
-        orders_right_spacer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # 🆕 Фрейм таблицы заказов НА ВСЕЙ ШИРИНЕ (убрано центрирование)
+        orders_tree_frame = tk.Frame(self.orders_frame, bg='white')
+        orders_tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
         scroll_y = tk.Scrollbar(orders_tree_frame, orient=tk.VERTICAL)
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
@@ -1648,10 +1701,10 @@ class ProductionApp:
             self.orders_tree.heading(col, text=col)
             self.orders_tree.column(col, anchor=tk.CENTER, width=100, minwidth=80, stretch=False)
 
-        self.orders_tree.pack(fill=tk.BOTH, expand=True)
+        self.orders_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.orders_tree.bind('<<TreeviewSelect>>', self.on_order_select)
 
-        # 🆕 ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ ЗАКАЗОВ
+        # ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ ЗАКАЗОВ
         self.orders_excel_filter = ExcelStyleFilter(
             tree=self.orders_tree,
             refresh_callback=self.refresh_orders
@@ -1682,7 +1735,6 @@ class ProductionApp:
         buttons_frame = tk.Frame(self.orders_frame, bg='white')
         buttons_frame.pack(fill=tk.X, padx=10, pady=5)
         btn_style = {"font": ("Arial", 10), "width": 15, "height": 2}
-
         tk.Button(buttons_frame, text="Добавить заказ", bg='#27ae60', fg='white', command=self.add_order,
                   **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(buttons_frame, text="Импорт из Excel", bg='#9b59b6', fg='white', command=self.import_orders,
@@ -1698,27 +1750,19 @@ class ProductionApp:
 
         # ========== ТАБЛИЦА ДЕТАЛЕЙ ЗАКАЗА ==========
         details_label = tk.Label(self.orders_frame, text="Детали выбранного заказа", font=("Arial", 12, "bold"),
-                                bg='white')
+                                 bg='white')
         details_label.pack(pady=5)
 
-        # Контейнер для центрирования таблицы деталей
-        details_center_container = tk.Frame(self.orders_frame, bg='white')
-        details_center_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-        details_left_spacer = tk.Frame(details_center_container, bg='#f0f0f0')
-        details_left_spacer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        details_tree_frame = tk.Frame(details_center_container, bg='white', relief=tk.RIDGE, borderwidth=1)
-        details_tree_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False)
-
-        details_right_spacer = tk.Frame(details_center_container, bg='#f0f0f0')
-        details_right_spacer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # 🆕 Фрейм таблицы деталей НА ВСЕЙ ШИРИНЕ (убрано центрирование)
+        details_tree_frame = tk.Frame(self.orders_frame, bg='white')
+        details_tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
         scroll_y2 = tk.Scrollbar(details_tree_frame, orient=tk.VERTICAL)
         scroll_y2.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.order_details_tree = ttk.Treeview(details_tree_frame,
-                                               columns=("ID", "ID заказа", "Название детали", "Количество", "Порезано", "Погнуто"),
+                                               columns=("ID", "ID заказа", "Название детали", "Количество", "Порезано",
+                                                        "Погнуто"),
                                                show="headings", yscrollcommand=scroll_y2.set)
         scroll_y2.config(command=self.order_details_tree.yview)
 
@@ -1727,10 +1771,10 @@ class ProductionApp:
             self.order_details_tree.heading(col, text=col)
             self.order_details_tree.column(col, anchor=tk.CENTER, width=100, minwidth=80, stretch=False)
 
-        self.order_details_tree.pack(fill=tk.BOTH, expand=True)
+        self.order_details_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.order_details_tree.bind('<Double-1>', self.on_detail_double_click)
 
-        # 🆕 ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ ДЕТАЛЕЙ
+        # ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ ДЕТАЛЕЙ
         self.order_details_excel_filter = ExcelStyleFilter(
             tree=self.order_details_tree,
             refresh_callback=self.refresh_order_details
@@ -1749,7 +1793,6 @@ class ProductionApp:
         # Кнопки управления деталями
         details_buttons_frame = tk.Frame(self.orders_frame, bg='white')
         details_buttons_frame.pack(fill=tk.X, padx=10, pady=5)
-
         tk.Button(details_buttons_frame, text="Добавить деталь", bg='#27ae60', fg='white',
                   command=self.add_order_detail, **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(details_buttons_frame, text="Редактировать деталь", bg='#f39c12', fg='white',
@@ -6586,21 +6629,9 @@ class ProductionApp:
                           font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
         header.pack(pady=10)
 
-        # 🆕 КОНТЕЙНЕР ДЛЯ ЦЕНТРИРОВАНИЯ ТАБЛИЦЫ (РАСТЯГИВАЕТСЯ ПО ВЫСОТЕ)
-        center_container = tk.Frame(self.balance_frame, bg='white')
-        center_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-        # 🆕 ЛЕВАЯ ПУСТАЯ ОБЛАСТЬ (РАСТЯГИВАЕТСЯ ПО ШИРИНЕ И ВЫСОТЕ)
-        left_spacer = tk.Frame(center_container, bg='#f0f0f0')
-        left_spacer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        # 🆕 ТАБЛИЦА В ЦЕНТРЕ (РАСТЯГИВАЕТСЯ ТОЛЬКО ПО ВЫСОТЕ, НЕ ПО ШИРИНЕ)
-        tree_frame = tk.Frame(center_container, bg='white', relief=tk.RIDGE, borderwidth=1)
-        tree_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False)
-
-        # 🆕 ПРАВАЯ ПУСТАЯ ОБЛАСТЬ (РАСТЯГИВАЕТСЯ ПО ШИРИНЕ И ВЫСОТЕ)
-        right_spacer = tk.Frame(center_container, bg='#f0f0f0')
-        right_spacer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # 🆕 Фрейм таблицы НА ВСЕЙ ШИРИНЕ (убрано центрирование)
+        tree_frame = tk.Frame(self.balance_frame, bg='white')
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
         scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
         scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
@@ -6620,8 +6651,8 @@ class ProductionApp:
             self.balance_tree.heading(col, text=col)
             self.balance_tree.column(col, anchor=tk.CENTER, width=100, minwidth=80, stretch=False)
 
-        # 🆕 ТАБЛИЦА ЗАПОЛНЯЕТ ВСЮ ВЫСОТУ ФРЕЙМА
-        self.balance_tree.pack(fill=tk.BOTH, expand=True)
+        # ТАБЛИЦА ЗАПОЛНЯЕТ ВСЮ ВЫСОТУ И ШИРИНУ ФРЕЙМА
+        self.balance_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         # ИНИЦИАЛИЗАЦИЯ ФИЛЬТРА В СТИЛЕ EXCEL
         self.balance_excel_filter = ExcelStyleFilter(
@@ -6646,39 +6677,42 @@ class ProductionApp:
         self.balance_filter_status.pack(pady=5)
 
         # ЛЕГЕНДА ЦВЕТОВ
-        legend_frame = tk.Frame(self.balance_frame, bg='white', relief=tk.RIDGE, borderwidth=1)
-        legend_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
+        legend_frame = tk.Frame(self.balance_frame, bg='white')
+        legend_frame.pack(pady=5)
 
-        tk.Label(legend_frame, text="Легенда:", font=("Arial", 9, "bold"), bg='white').pack(side=tk.LEFT, padx=5)
+        tk.Label(legend_frame, text="Легенда:", font=("Arial", 10, "bold"), bg='white').pack(side=tk.LEFT, padx=5)
 
-        tk.Label(legend_frame, text="  Дефицит (Доступно < 0)  ",
-                 bg='#f8d7da', fg='#721c24', font=("Arial", 8), relief=tk.RAISED, borderwidth=1).pack(side=tk.LEFT,
-                                                                                                      padx=2)
+        # Отрицательное значение (проблема)
+        negative_label = tk.Label(legend_frame, text="  Отрицательное  ", bg='#f8d7da', fg='#721c24',
+                                  font=("Arial", 9, "bold"), relief=tk.RAISED, borderwidth=1)
+        negative_label.pack(side=tk.LEFT, padx=3)
 
-        tk.Label(legend_frame, text="  Есть остаток (Доступно > 0)  ",
-                 bg='#d4edda', fg='#155724', font=("Arial", 8), relief=tk.RAISED, borderwidth=1).pack(side=tk.LEFT,
-                                                                                                      padx=2)
+        # Полностью зарезервировано
+        reserved_label = tk.Label(legend_frame, text="  Полностью зарезервировано  ", bg='#fff3cd', fg='#856404',
+                                  font=("Arial", 9, "bold"), relief=tk.RAISED, borderwidth=1)
+        reserved_label.pack(side=tk.LEFT, padx=3)
 
-        tk.Label(legend_frame, text="  Зарезервировано (Доступно = 0)  ",
-                 bg='#fff3cd', fg='#856404', font=("Arial", 8), relief=tk.RAISED, borderwidth=1).pack(side=tk.LEFT,
-                                                                                                      padx=2)
+        # Есть доступно
+        available_label = tk.Label(legend_frame, text="  Есть доступно  ", bg='#d4edda', fg='#155724',
+                                   font=("Arial", 9, "bold"), relief=tk.RAISED, borderwidth=1)
+        available_label.pack(side=tk.LEFT, padx=3)
 
-        tk.Label(legend_frame, text="  Нет на складе (Всего = 0)  ",
-                 bg='#d1ecf1', fg='#0c5460', font=("Arial", 8), relief=tk.RAISED, borderwidth=1).pack(side=tk.LEFT,
-                                                                                                      padx=2)
+        # Нет в наличии
+        empty_label = tk.Label(legend_frame, text="  Нет в наличии  ", bg='#d1ecf1', fg='#0c5460',
+                               font=("Arial", 9, "bold"), relief=tk.RAISED, borderwidth=1)
+        empty_label.pack(side=tk.LEFT, padx=3)
 
-        # Панель кнопок
+        # Кнопки управления
         buttons_frame = tk.Frame(self.balance_frame, bg='white')
-        buttons_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        btn_style = {"font": ("Arial", 10), "width": 18, "height": 2}
+        buttons_frame.pack(fill=tk.X, padx=10, pady=5)
 
         tk.Button(buttons_frame, text="🔄 Обновить", bg='#3498db', fg='white',
-                  command=self.refresh_balance, **btn_style).pack(side=tk.LEFT, padx=5)
+                  font=("Arial", 10), command=self.refresh_balance).pack(side=tk.LEFT, padx=5)
 
         tk.Button(buttons_frame, text="✖ Сбросить все фильтры", bg='#e67e22', fg='white',
-                  command=self.clear_balance_filters, **btn_style).pack(side=tk.LEFT, padx=5)
+                  font=("Arial", 10), command=self.clear_balance_filters).pack(side=tk.LEFT, padx=5)
 
+        # Первичная загрузка данных
         self.refresh_balance()
 
     def clear_balance_filters(self):
