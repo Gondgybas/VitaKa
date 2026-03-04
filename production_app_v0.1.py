@@ -150,6 +150,435 @@ class ExcelStyleFilter:
 
             # Определяем какие значения выбраны (из активного фильтра)
             if column_id in self.active_filters:
+                currently_selected = set(self.active_filters[column_id])
+                print(f"   ✅ Фильтр УЖЕ активен для '{column_id}'")
+                print(f"      Выбрано ранее: {sorted(currently_selected)}")
+            else:
+                currently_selected = all_unique_values.copy()
+                print(f"   ℹ️ Фильтр НЕ активен для '{column_id}' - все значения выбраны по умолчанию")
+
+            # ТРЁХУРОВНЕВАЯ СОРТИРОВКА
+            selected_visible_set = currently_selected & visible_unique_values
+            selected_visible = sorted(list(selected_visible_set))
+
+            selected_hidden_set = currently_selected - visible_unique_values
+            selected_hidden = sorted(list(selected_hidden_set))
+
+            unselected_set = all_unique_values - currently_selected
+            unselected = sorted(list(unselected_set))
+
+            unique_values = selected_visible + selected_hidden + unselected
+
+            print(f"   📊 Статистика:")
+            print(f"      Видимых значений: {len(visible_unique_values)}")
+            print(f"      Всего значений: {len(all_unique_values)}")
+            print(f"      Выбранных ранее: {len(currently_selected)}")
+            print(f"      К отображению: {len(unique_values)}")
+            print(f"   📋 1️⃣ Выбранные+видимые ({len(selected_visible)}): {selected_visible}")
+            print(f"   📋 2️⃣ Выбранные+скрытые ({len(selected_hidden)}): {selected_hidden}")
+            print(f"   📋 3️⃣ Невыбранные ({len(unselected)}): {unselected}")
+
+            print(f"   🔨 Создаю окно фильтра...")
+
+            # Создаём всплывающее окно фильтра
+            filter_window = tk.Toplevel(self.tree)
+            filter_window.title(f"Фильтр: {column_id}")
+            filter_window.geometry("320x600")  # Увеличена высота для поиска
+            filter_window.configure(bg='#ecf0f1')
+            filter_window.transient(self.tree)
+            filter_window.grab_set()
+
+            print(f"   ✅ Окно создано")
+
+            # Позиционируем окно под заголовком
+            x = event.x_root
+            y = event.y_root + 20
+            filter_window.geometry(f"+{x}+{y}")
+
+            # Заголовок
+            header_frame = tk.Frame(filter_window, bg='#3498db')
+            header_frame.pack(fill=tk.X)
+
+            tk.Label(header_frame, text=f"Фильтр: {column_id}",
+                     font=("Arial", 12, "bold"), bg='#3498db', fg='white', pady=10).pack()
+
+            print(f"   ✅ Заголовок добавлен")
+
+            # Кнопки сортировки
+            sort_frame = tk.Frame(filter_window, bg='#ecf0f1')
+            sort_frame.pack(fill=tk.X, padx=10, pady=10)
+
+            tk.Label(sort_frame, text="Сортировка:", font=("Arial", 10, "bold"),
+                     bg='#ecf0f1').pack(anchor='w', pady=(0, 5))
+
+            tk.Button(sort_frame, text="▲ По возрастанию (A→Z, 0→9)",
+                      command=lambda: self.apply_sort(column_id, 'asc', filter_window),
+                      bg='#3498db', fg='white', font=("Arial", 9), relief=tk.RAISED).pack(fill=tk.X, pady=2)
+
+            tk.Button(sort_frame, text="▼ По убыванию (Z→A, 9→0)",
+                      command=lambda: self.apply_sort(column_id, 'desc', filter_window),
+                      bg='#3498db', fg='white', font=("Arial", 9), relief=tk.RAISED).pack(fill=tk.X, pady=2)
+
+            print(f"   ✅ Кнопки сортировки добавлены")
+
+            # Разделитель
+            tk.Frame(filter_window, height=2, bg='#95a5a6').pack(fill=tk.X, pady=5)
+
+            # 🆕 ПОЛЕ ПОИСКА
+            search_frame = tk.Frame(filter_window, bg='#ecf0f1')
+            search_frame.pack(fill=tk.X, padx=10, pady=5)
+
+            tk.Label(search_frame, text="🔍 Поиск:", font=("Arial", 10, "bold"), bg='#ecf0f1').pack(side=tk.LEFT, padx=5)
+
+            search_var = tk.StringVar()
+            search_entry = tk.Entry(search_frame, textvariable=search_var, font=("Arial", 10), width=20)
+            search_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+
+            # Кнопка очистки поиска
+            def clear_search():
+                search_var.set("")
+                search_entry.focus_set()
+
+            clear_search_btn = tk.Button(search_frame, text="✖", font=("Arial", 8), bg='#e74c3c', fg='white',
+                                         command=clear_search, width=3)
+            clear_search_btn.pack(side=tk.LEFT, padx=2)
+
+            print(f"   ✅ Поле поиска добавлено")
+
+            # Разделитель
+            tk.Frame(filter_window, height=2, bg='#95a5a6').pack(fill=tk.X, pady=5)
+
+            # Информация о фильтрации
+            hidden_selected_count = len(currently_selected - visible_unique_values)
+
+            if len(visible_unique_values) < len(all_unique_values):
+                hidden_by_filters = len(all_unique_values) - len(visible_unique_values)
+                info_text = f"Показано {len(visible_unique_values)} из {len(all_unique_values)} (скрыто {hidden_by_filters} другими фильтрами)"
+                if hidden_selected_count > 0:
+                    info_text += f"\n+ {hidden_selected_count} ранее выбранных (скрытых)"
+                tk.Label(filter_window, text=info_text, font=("Arial", 8, "italic"),
+                         bg='#fff3cd', fg='#856404', pady=5, justify=tk.LEFT).pack(fill=tk.X, padx=10, pady=(5, 0))
+
+            tk.Label(filter_window, text="Фильтр по значению:",
+                     font=("Arial", 10, "bold"), bg='#ecf0f1').pack(pady=(5, 5), padx=10, anchor='w')
+
+            print(f"   ✅ Информация добавлена")
+
+            # Фрейм со списком значений
+            list_frame = tk.Frame(filter_window, bg='white', relief=tk.SUNKEN, borderwidth=1)
+            list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 5))
+
+            # Scrollbar
+            scrollbar = tk.Scrollbar(list_frame, orient=tk.VERTICAL)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+            # Canvas для чекбоксов
+            canvas = tk.Canvas(list_frame, bg='white', yscrollcommand=scrollbar.set, highlightthickness=0)
+            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scrollbar.config(command=canvas.yview)
+
+            # Фрейм внутри canvas
+            checkboxes_frame = tk.Frame(canvas, bg='white')
+            canvas_window = canvas.create_window((0, 0), window=checkboxes_frame, anchor='nw')
+
+            print(f"   ✅ Canvas создан")
+
+            # НАСТРОЙКА ПРОКРУТКИ КОЛЕСОМ МЫШИ
+            def _on_mousewheel(e):
+                canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+
+            def _on_mousewheel_linux_up(e):
+                canvas.yview_scroll(-1, "units")
+
+            def _on_mousewheel_linux_down(e):
+                canvas.yview_scroll(1, "units")
+
+            def _bind_to_mousewheel(e):
+                canvas.bind_all("<MouseWheel>", _on_mousewheel)
+                canvas.bind_all("<Button-4>", _on_mousewheel_linux_up)
+                canvas.bind_all("<Button-5>", _on_mousewheel_linux_down)
+
+            def _unbind_from_mousewheel(e):
+                canvas.unbind_all("<MouseWheel>")
+                canvas.unbind_all("<Button-4>")
+                canvas.unbind_all("<Button-5>")
+
+            canvas.bind('<Enter>', _bind_to_mousewheel)
+            canvas.bind('<Leave>', _unbind_from_mousewheel)
+
+            # Переменная для хранения trace_id
+            trace_id = None
+
+            # Очистка при закрытии окна
+            def cleanup_and_close():
+                try:
+                    _unbind_from_mousewheel(None)
+                except:
+                    pass
+
+                try:
+                    if trace_id is not None:
+                        search_var.trace_remove('write', trace_id)
+                except:
+                    pass
+
+                try:
+                    filter_window.destroy()
+                except:
+                    pass
+
+            filter_window.protocol("WM_DELETE_WINDOW", cleanup_and_close)
+
+            # Чекбокс "Выбрать всё"
+            all_selected = (len(currently_selected.intersection(unique_values)) == len(unique_values))
+            select_all_var = tk.BooleanVar(value=all_selected)
+            checkbox_vars = {}
+
+            def toggle_all():
+                state = select_all_var.get()
+                search_text = search_var.get().lower().strip()
+                for value, var in checkbox_vars.items():
+                    if not search_text or search_text in value.lower():
+                        var.set(state)
+
+            select_all_frame = tk.Frame(checkboxes_frame, bg='#e8f4f8')
+            select_all_frame.pack(fill=tk.X, pady=2)
+
+            tk.Checkbutton(select_all_frame, text="✓ Выбрать всё",
+                           variable=select_all_var, command=toggle_all,
+                           font=("Arial", 10, "bold"), bg='#e8f4f8',
+                           activebackground='#d1ecf1').pack(anchor='w', padx=5, pady=5)
+
+            tk.Frame(checkboxes_frame, height=2, bg='#95a5a6').pack(fill=tk.X, padx=5, pady=2)
+
+            print(f"   🎛️ Создаю {len(unique_values)} чекбоксов...")
+
+            # Счётчики для разделителей
+            count_selected_visible = len(selected_visible)
+            count_selected_hidden = len(selected_hidden)
+            current_index = 0
+
+            # Словарь для связи значения с его фреймом
+            checkbox_frames = {}
+
+            for value in unique_values:
+                is_checked = (value in currently_selected)
+                is_visible = (value in visible_unique_values)
+
+                # РАЗДЕЛИТЕЛЬ 1
+                if current_index == count_selected_visible and count_selected_hidden > 0:
+                    separator_frame = tk.Frame(checkboxes_frame, height=2, bg='#bbb')
+                    separator_frame.pack(fill=tk.X, padx=5, pady=5)
+
+                    label_frame = tk.Frame(checkboxes_frame, bg='#ffe8cc')
+                    label_frame.pack(fill=tk.X, padx=2, pady=2)
+                    tk.Label(label_frame, text="▼ Выбранные (скрытые другими фильтрами) ▼",
+                             font=("Arial", 8, "italic"), bg='#ffe8cc', fg='#d97706').pack(pady=2)
+
+                # РАЗДЕЛИТЕЛЬ 2
+                if current_index == count_selected_visible + count_selected_hidden and len(unselected) > 0:
+                    separator_frame = tk.Frame(checkboxes_frame, height=2, bg='#bbb')
+                    separator_frame.pack(fill=tk.X, padx=5, pady=5)
+
+                    label_frame = tk.Frame(checkboxes_frame, bg='#e8e8e8')
+                    label_frame.pack(fill=tk.X, padx=2, pady=2)
+                    tk.Label(label_frame, text="▼ Невыбранные зн��чения ▼",
+                             font=("Arial", 8, "italic"), bg='#e8e8e8', fg='#666').pack(pady=2)
+
+                current_index += 1
+
+                var = tk.BooleanVar(value=is_checked)
+                checkbox_vars[value] = var
+
+                bg_color = 'white' if is_visible else '#f8f8f8'
+                cb_frame = tk.Frame(checkboxes_frame, bg=bg_color)
+                cb_frame.pack(fill=tk.X, padx=2, pady=1)
+
+                if not is_visible:
+                    display_text = f"{value} 🔒"
+                    cb = tk.Checkbutton(cb_frame, text=display_text, variable=var,
+                                        font=("Arial", 9, "italic"), bg=bg_color,
+                                        fg='#888', activebackground='#e0e0e0')
+                else:
+                    cb = tk.Checkbutton(cb_frame, text=value, variable=var,
+                                        font=("Arial", 9), bg=bg_color, activebackground='#f0f0f0')
+
+                cb.pack(anchor='w', padx=10, pady=2)
+
+                # Сохраняем ссылку на фрейм
+                checkbox_frames[value] = cb_frame
+
+            print(f"   ✅ Создано чекбоксов: {len(checkbox_vars)}")
+
+            # 🆕 ФУНКЦИЯ ФИЛЬТРАЦИИ
+            def filter_checkboxes(*args):
+                try:
+                    if not filter_window.winfo_exists():
+                        return
+                except:
+                    return
+
+                search_text = search_var.get().lower().strip()
+                visible_count = 0
+                matched_count = 0
+
+                # Скрываем все фреймы
+                for cb_frame in checkbox_frames.values():
+                    try:
+                        cb_frame.pack_forget()
+                    except:
+                        pass
+
+                # Показываем только нужные в правильном порядке
+                for value in unique_values:
+                    if value not in checkbox_vars:
+                        continue
+
+                    var = checkbox_vars[value]
+                    cb_frame = checkbox_frames.get(value)
+
+                    if not cb_frame:
+                        continue
+
+                    try:
+                        if not search_text:
+                            cb_frame.pack(fill=tk.X, padx=2, pady=1)
+                            visible_count += 1
+                        elif search_text in value.lower():
+                            cb_frame.pack(fill=tk.X, padx=2, pady=1)
+                            var.set(True)
+                            visible_count += 1
+                            matched_count += 1
+                        else:
+                            var.set(False)
+                    except:
+                        continue
+
+                # Обновляем "Выбрать всё"
+                try:
+                    if search_text and matched_count > 0:
+                        select_all_var.set(True)
+                    elif not search_text:
+                        checked_count = sum(1 for var in checkbox_vars.values() if var.get())
+                        select_all_var.set(checked_count == len(checkbox_vars))
+                except:
+                    pass
+
+                if search_text:
+                    print(f"   🔍 Поиск '{search_text}': показано {visible_count}, выбрано {matched_count}")
+
+                # Обновляем canvas
+                try:
+                    checkboxes_frame.update_idletasks()
+                    canvas.configure(scrollregion=canvas.bbox("all"))
+                except:
+                    pass
+
+            # Привязываем фильтрацию
+            trace_id = search_var.trace_add('write', filter_checkboxes)
+
+            # Фокус на поле поиска
+            search_entry.focus_set()
+
+            # Обновляем размер canvas
+            def on_frame_configure(event=None):
+                try:
+                    if canvas.winfo_exists():
+                        canvas.configure(scrollregion=canvas.bbox("all"))
+                        canvas.itemconfig(canvas_window, width=canvas.winfo_width())
+                except:
+                    pass
+
+            checkboxes_frame.bind("<Configure>", on_frame_configure)
+            canvas.bind("<Configure>", on_frame_configure)
+
+            # ФУНКЦИИ ДЛЯ КНОПОК
+            def apply_value_filter():
+                selected_values = {value for value, var in checkbox_vars.items() if var.get()}
+
+                if not selected_values:
+                    messagebox.showwarning("Предупреждение", "Выберите хотя бы одно значение!")
+                    return
+
+                cleanup_and_close()
+                self.apply_filter(column_id, selected_values, None)
+
+            def clear_filter():
+                if column_id in self.active_filters:
+                    del self.active_filters[column_id]
+
+                self.update_column_headers()
+                cleanup_and_close()
+                self.refresh_callback()
+
+            # КНОПКИ ДЕЙСТВИЙ
+            buttons_frame = tk.Frame(filter_window, bg='#ecf0f1')
+            buttons_frame.pack(fill=tk.X, padx=10, pady=10)
+
+            btn_style = {"font": ("Arial", 10, "bold"), "relief": tk.RAISED, "borderwidth": 2}
+
+            tk.Button(buttons_frame, text="✓ Применить фильтр", command=apply_value_filter,
+                      bg='#27ae60', fg='white', activebackground='#229954', **btn_style).pack(side=tk.LEFT, padx=5,
+                                                                                              expand=True, fill=tk.X)
+
+            tk.Button(buttons_frame, text="✗ Сбросить фильтр", command=clear_filter,
+                      bg='#e74c3c', fg='white', activebackground='#c0392b', font=("Arial", 10)).pack(side=tk.LEFT,
+                                                                                                     padx=5,
+                                                                                                     expand=True,
+                                                                                                     fill=tk.X)
+
+            tk.Button(buttons_frame, text="Отмена", command=cleanup_and_close,
+                      bg='#95a5a6', fg='white', activebackground='#7f8c8d', font=("Arial", 10)).pack(side=tk.LEFT,
+                                                                                                     padx=5,
+                                                                                                     expand=True,
+                                                                                                     fill=tk.X)
+
+            print(f"   ✅ Окно фильтра готово\n")
+
+        except Exception as e:
+            print(f"❌ ОШИБКА в show_filter_menu: {e}")
+            import traceback
+            traceback.print_exc()
+        """Показать меню фильтра для столбца"""
+        try:
+            column_index = list(self.tree["columns"]).index(column_id)
+
+            # ДВА НАБОРА: все значения (для сохранения выбора) и видимые (для отображения)
+            all_unique_values = set()
+            visible_unique_values = set()
+
+            print(f"\n🔍 Сбор уникальных значений для столбца '{column_id}' (индекс {column_index}):")
+
+            # Собираем ТОЛЬКО видимые элементы (после других фильтров)
+            visible_items = list(self.tree.get_children(''))
+
+            print(f"   📊 Всего видимых строк: {len(visible_items)}")
+
+            # Обновляем кэш всех item_id
+            if not hasattr(self, '_all_item_cache'):
+                self._all_item_cache = set()
+
+            # Собираем значения из ВИДИМЫХ элементов
+            for item_id in visible_items:
+                self._all_item_cache.add(item_id)
+                values = self.tree.item(item_id)["values"]
+                value = values[column_index]
+                visible_unique_values.add(str(value))
+                all_unique_values.add(str(value))
+
+            # Собираем значения из СКРЫТЫХ элементов (для полного списка)
+            for item_id in self._all_item_cache:
+                if item_id not in visible_items:
+                    try:
+                        values = self.tree.item(item_id)["values"]
+                        if values:
+                            value = values[column_index]
+                            all_unique_values.add(str(value))
+                    except:
+                        pass
+
+            # Определяем какие значения выбраны (из активного фильтра)
+            if column_id in self.active_filters:
                 currently_selected = self.active_filters[column_id]
                 print(f"   ✅ Фильтр УЖЕ активен для '{column_id}'")
                 print(f"      Выбрано ранее: {sorted(currently_selected)}")
@@ -316,8 +745,26 @@ class ExcelStyleFilter:
 
             # Очистка при закрытии окна
             def cleanup_and_close():
-                _unbind_from_mousewheel(None)
-                filter_window.destroy()
+                try:
+                    _unbind_from_mousewheel(None)
+                except:
+                    pass
+
+                try:
+                    # 🆕 Отключаем trace для поиска (если он был создан)
+                    if 'trace_id' in locals() or 'trace_id' in dir():
+                        search_var.trace_remove('write', trace_id)
+                except:
+                    pass
+
+                try:
+                    filter_window.destroy()
+                except:
+                    pass
+
+            filter_window.protocol("WM_DELETE_WINDOW", cleanup_and_close)
+
+            filter_window.protocol("WM_DELETE_WINDOW", cleanup_and_close)
 
             filter_window.protocol("WM_DELETE_WINDOW", cleanup_and_close)
 
