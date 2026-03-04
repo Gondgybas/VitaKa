@@ -944,6 +944,37 @@ class ProductionApp:
 
         self.materials_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
+        # ЦВЕТОВАЯ ИНДИКАЦИЯ (КАК В БАЛАНСЕ)
+        self.materials_tree.tag_configure('negative', background='#f8d7da', foreground='#721c24')
+        self.materials_tree.tag_configure('available', background='#d4edda', foreground='#155724')
+        self.materials_tree.tag_configure('fully_reserved', background='#fff3cd', foreground='#856404')
+        self.materials_tree.tag_configure('empty', background='#d1ecf1', foreground='#0c5460')
+
+        # 🆕 ТЕСТОВАЯ ВСТАВКА ДЛЯ ПРОВЕРКИ РАБОТЫ ТЕГОВ
+        print("\n🧪 === ТЕСТОВАЯ ВСТАВКА ДЛЯ ПРОВЕРКИ ТЕГОВ ===")
+        test_negative = self.materials_tree.insert("", "end",
+                                                   values=("TEST1", "ТЕСТ", "1.0", "1000", "1000", "10", "10", "15",
+                                                           "-5", "2025-01-01"),
+                                                   tags=('negative',))
+        test_available = self.materials_tree.insert("", "end",
+                                                    values=("TEST2", "ТЕСТ", "2.0", "2000", "2000", "20", "20", "5",
+                                                            "15", "2025-01-01"),
+                                                    tags=('available',))
+        test_reserved = self.materials_tree.insert("", "end",
+                                                   values=("TEST3", "ТЕСТ", "3.0", "3000", "3000", "30", "30", "30",
+                                                           "0", "2025-01-01"),
+                                                   tags=('fully_reserved',))
+        test_empty = self.materials_tree.insert("", "end",
+                                                values=("TEST4", "ТЕСТ", "4.0", "4000", "4000", "0", "0", "0", "0",
+                                                        "2025-01-01"),
+                                                tags=('empty',))
+
+        print(f"   Вставлен TEST1 (negative): теги = {self.materials_tree.item(test_negative, 'tags')}")
+        print(f"   Вставлен TEST2 (available): теги = {self.materials_tree.item(test_available, 'tags')}")
+        print(f"   Вставлен TEST3 (fully_reserved): теги = {self.materials_tree.item(test_reserved, 'tags')}")
+        print(f"   Вставлен TEST4 (empty): теги = {self.materials_tree.item(test_empty, 'tags')}")
+        print(f"🧪 === ПРОВЕРЬТЕ ТАБЛИЦУ: ВИДНЫ ЛИ 4 ЦВЕТНЫЕ СТРОКИ? ===\n")
+
         # 🆕 ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ МАТЕРИАЛОВ
         self.materials_excel_filter = ExcelStyleFilter(
             tree=self.materials_tree,
@@ -998,6 +1029,10 @@ class ProductionApp:
     def refresh_materials(self):
         """Обновление списка материалов"""
 
+        print(f"\n{'=' * 60}")
+        print(f"🔄 НАЧАЛО refresh_materials()")
+        print(f"{'=' * 60}")
+
         # СОХРАНЯЕМ АКТИВНЫЕ ФИЛЬТРЫ ПЕРЕД ОЧИСТКОЙ
         active_filters_backup = {}
         if hasattr(self, 'materials_excel_filter') and self.materials_excel_filter.active_filters:
@@ -1014,6 +1049,18 @@ class ProductionApp:
 
         df = load_data("Materials")
 
+        print(f"📊 Загружено материалов из БД: {len(df)}")
+
+        # 🆕 ПРО��ЕРКА: НАСТРОЕНЫ ЛИ ТЕГИ?
+        print(f"\n🎨 Проверка конфигурации тегов:")
+        try:
+            print(f"   negative: {self.materials_tree.tag_configure('negative')}")
+            print(f"   available: {self.materials_tree.tag_configure('available')}")
+            print(f"   fully_reserved: {self.materials_tree.tag_configure('fully_reserved')}")
+            print(f"   empty: {self.materials_tree.tag_configure('empty')}")
+        except Exception as e:
+            print(f"   ❌ ОШИБКА проверки тегов: {e}")
+
         if not df.empty:
             show_zero_stock = True
             show_zero_available = True
@@ -1022,9 +1069,24 @@ class ProductionApp:
                 show_zero_stock = self.materials_toggles.get('show_zero_stock', tk.BooleanVar(value=True)).get()
                 show_zero_available = self.materials_toggles.get('show_zero_available', tk.BooleanVar(value=True)).get()
 
+            print(f"\n📋 Начало вставки строк:")
+            inserted_count = 0
+            tag_stats = {'negative': 0, 'available': 0, 'fully_reserved': 0, 'empty': 0}
+
             for index, row in df.iterrows():
-                quantity = int(row["Количество штук"]) if row["Количество штук"] else 0
-                available = int(row["Доступно"]) if row["Доступно"] else 0
+                # 🆕 ДЕТАЛЬНАЯ ДИАГНОСТИКА ЗНАЧЕНИЙ
+                quantity_raw = row["Количество штук"]
+                available_raw = row["Доступно"]
+
+                try:
+                    quantity = int(quantity_raw) if quantity_raw else 0
+                except:
+                    quantity = 0
+
+                try:
+                    available = int(available_raw) if available_raw else 0
+                except:
+                    available = 0
 
                 if not show_zero_stock and quantity == 0:
                     continue
@@ -1035,7 +1097,41 @@ class ProductionApp:
                           row["Количество штук"], row["Общая площадь"], row["Зарезервировано"],
                           row["Доступно"], row["Дата добавления"])
 
-                item_id = self.materials_tree.insert("", "end", values=values)
+                # 🆕 ОПРЕДЕЛЯЕМ ТЕГ С ДЕТАЛЬНОЙ ДИАГНОСТИКОЙ
+                tag = None
+
+                if available < 0:
+                    tag = 'negative'
+                    tag_stats['negative'] += 1
+                elif available > 0:
+                    tag = 'available'
+                    tag_stats['available'] += 1
+                elif available == 0 and quantity > 0:
+                    tag = 'fully_reserved'
+                    tag_stats['fully_reserved'] += 1
+                else:
+                    tag = 'empty'
+                    tag_stats['empty'] += 1
+
+                # Диагностика первых 5 строк
+                if inserted_count < 5:
+                    print(f"   Строка {inserted_count}:")
+                    print(f"      ID: {row['ID']}, Марка: {row['Марка']}")
+                    print(f"      Кол-во (raw): '{quantity_raw}' (type: {type(quantity_raw).__name__})")
+                    print(f"      Кол-во (parsed): {quantity} (type: {type(quantity).__name__})")
+                    print(f"      Доступно (raw): '{available_raw}' (type: {type(available_raw).__name__})")
+                    print(f"      Доступно (parsed): {available} (type: {type(available).__name__})")
+                    print(f"      Условие: available={available}, quantity={quantity}")
+                    print(f"      ✅ Тег: {tag}")
+
+                # Вставляем с тегом
+                item_id = self.materials_tree.insert("", "end", values=values, tags=(tag,))
+                inserted_count += 1
+
+                # 🆕 ПРОВЕРЯЕМ ЧТО ТЕГ ДЕЙСТВИТЕЛЬНО ПРИМЕНИЛСЯ
+                if inserted_count <= 5:
+                    actual_tags = self.materials_tree.item(item_id, 'tags')
+                    print(f"      Проверка: фактические теги элемента = {actual_tags}")
 
                 # СОХРАНЯЕМ item_id В КЭШ
                 if hasattr(self, 'materials_excel_filter'):
@@ -1043,14 +1139,35 @@ class ProductionApp:
                         self.materials_excel_filter._all_item_cache = set()
                     self.materials_excel_filter._all_item_cache.add(item_id)
 
+            print(f"\n✅ Вставлено строк: {inserted_count}")
+            print(f"📊 Статистика по тегам:")
+            print(f"   🔴 negative (красный): {tag_stats['negative']}")
+            print(f"   🟢 available (зелёный): {tag_stats['available']}")
+            print(f"   🟡 fully_reserved (жёлтый): {tag_stats['fully_reserved']}")
+            print(f"   🔵 empty (голубой): {tag_stats['empty']}")
+
         # АВТОПОДБОР ШИРИНЫ КОЛОНОК
         self.auto_resize_columns(self.materials_tree, min_width=80, max_width=200)
 
         # ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ ПОСЛЕ ЗАГРУЗКИ ДАННЫХ
         if active_filters_backup and hasattr(self, 'materials_excel_filter'):
-            print(f"🔄 Переприменяю фильтры материалов: {list(active_filters_backup.keys())}")
+            print(f"\n🔄 Переприменяю фильтры материалов: {list(active_filters_backup.keys())}")
             self.materials_excel_filter.active_filters = active_filters_backup
             self.materials_excel_filter.reapply_all_filters()
+
+        # 🆕 ФИНАЛЬНАЯ ПРОВЕРКА: ЕСТЬ ЛИ ТЕГИ У ВИДИМЫХ ЭЛЕМЕНТОВ?
+        print(f"\n🔍 Финальная проверка тегов видимых элементов:")
+        visible_items = list(self.materials_tree.get_children(''))
+        print(f"   Всего видимых элементов: {len(visible_items)}")
+
+        for i, item_id in enumerate(visible_items[:3]):  # Первые 3
+            tags = self.materials_tree.item(item_id, 'tags')
+            values = self.materials_tree.item(item_id, 'values')
+            print(f"   Элемент {i}: ID={values[0]}, Доступно={values[8]}, Теги={tags}")
+
+        print(f"\n{'=' * 60}")
+        print(f"✅ КОНЕЦ refresh_materials()")
+        print(f"{'=' * 60}\n")
 
     def download_template(self):
         file_path = filedialog.asksaveasfilename(title="Сохранить шаблон", defaultextension=".xlsx",
