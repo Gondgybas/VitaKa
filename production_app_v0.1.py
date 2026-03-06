@@ -2258,39 +2258,72 @@ class ProductionApp:
                 (reservations_df["ID детали"] == detail_id)
                 ]
 
-            if detail_reserves.empty:
-                reserved_metal = ""
-                remaining_reserved = ""
-            else:
-                # Собираем информацию о всех резервах
-                reserved_list = []
-                remaining_list = []
+            # Переменные для вывода
+            material_info = ""
+            material_stock = ""
+            remaining_reserved_count = ""
+
+            if not detail_reserves.empty:
+                # Загружаем данные материалов для проверки остатка на складе
+                materials_df = load_data("Materials")
+
+                material_parts = []
+                stock_parts = []
+                remaining_count_list = []
 
                 for _, reserve in detail_reserves.iterrows():
+                    material_id = reserve["ID материала"]
                     marka = reserve["Марка"]
                     thickness = reserve["Толщина"]
                     width = reserve["Ширина"]
                     length = reserve["Длина"]
-                    reserved_qty = int(reserve["Зарезервировано штук"])
                     remaining_qty = int(reserve["Остаток к списанию"])
 
-                    metal_info = f"{marka} {thickness}мм {width}x{length} ({reserved_qty} шт)"
-                    reserved_list.append(metal_info)
+                    # Описание материала (без количества)
+                    material_desc = f"{marka} {thickness}мм {width}x{length}"
 
+                    # Добавляем только количество листов к списанию
                     if remaining_qty > 0:
-                        remaining_info = f"{marka} {thickness}мм {width}x{length} ({remaining_qty} шт)"
-                        remaining_list.append(remaining_info)
+                        remaining_count_list.append(str(remaining_qty))
 
-                reserved_metal = "; ".join(reserved_list) if reserved_list else ""
-                remaining_reserved = "; ".join(remaining_list) if remaining_list else ""
+                    # Ищем ОБЩИЙ фактический остаток на складе (колонка "Количество штук")
+                    if material_id != -1 and not materials_df.empty:
+                        material_row = materials_df[materials_df["ID"] == material_id]
+                        if not material_row.empty:
+                            total_quantity = int(material_row.iloc[0]["Количество штук"])
+                            material_parts.append(material_desc)
+                            stock_parts.append(str(total_quantity))
+
+                material_info = "; ".join(material_parts) if material_parts else ""
+                material_stock = "; ".join(stock_parts) if stock_parts else ""
+                remaining_reserved_count = "; ".join(remaining_count_list) if remaining_count_list else ""
 
             # Формируем текст для копирования
-            copy_text = (
-                f"{customer} | {order_name} | "
-                f"{detail_name} | "
-                f"Осталось: {remaining_to_cut} | "
-                f"{remaining_reserved}"
-            )
+            parts = [
+                f"{customer} | {order_name}",
+                f"{detail_name}",
+                f"Оста��ось: {remaining_to_cut} шт"
+            ]
+
+            # Добавляем материал (если есть)
+            if material_info:
+                parts.append(f"Материал: {material_info}")
+            else:
+                parts.append("Материал: ")
+
+            # Добавляем остаток на складе (если есть)
+            if material_stock:
+                parts.append(f"Остаток на складе: {material_stock} шт")
+            else:
+                parts.append("Остаток на складе: ")
+
+            # Добавляем количество к списанию (если есть)
+            if remaining_reserved_count:
+                parts.append(f"Остаток порезать: {remaining_reserved_count} шт")
+            else:
+                parts.append("Остаток порезать: ")
+
+            copy_text = " | ".join(parts)
 
             # Копируем в буфер обмена
             self.root.clipboard_clear()
@@ -2357,40 +2390,72 @@ class ProductionApp:
                 reservations_df["ID детали"] == detail_id
                 ]
 
-            if detail_reserves.empty:
-                reserved_metal = ""
-                remaining_reserved = ""
-            else:
-                # Собираем информацию о всех резервах
-                reserved_list = []
-                remaining_list = []
+            # Переменные для вывода
+            material_info = ""
+            material_stock = ""
+            remaining_reserved_count = ""
+
+            if not detail_reserves.empty:
+                # Загружаем данные материалов для проверки остатка на складе
+                materials_df = load_data("Materials")
+
+                material_parts = []
+                stock_parts = []
+                remaining_count_list = []
 
                 for _, reserve in detail_reserves.iterrows():
+                    material_id = reserve["ID материала"]
                     marka = reserve["Марка"]
                     thickness = reserve["Толщина"]
                     width = reserve["Ширина"]
                     length = reserve["Длина"]
-                    reserved_qty = int(reserve["Зарезервировано штук"])
                     remaining_qty = int(reserve["Остаток к списанию"])
 
-                    metal_info = f"{marka} {thickness}мм {width}x{length} ({reserved_qty} шт)"
-                    reserved_list.append(metal_info)
+                    # Описание материала (без количества)
+                    material_desc = f"{marka} {thickness}мм {width}x{length}"
 
+                    # Добавляем только количество листов к списанию
                     if remaining_qty > 0:
-                        remaining_info = f"{marka} {thickness}мм {width}x{length} ({remaining_qty} шт)"
-                        remaining_list.append(remaining_info)
+                        remaining_count_list.append(str(remaining_qty))
 
-                reserved_metal = "; ".join(reserved_list) if reserved_list else ""
-                remaining_reserved = "; ".join(remaining_list) if remaining_list else ""
+                    # Ищем ОБЩИЙ фактический остаток на складе (колонка "Количество штук")
+                    if material_id != -1 and not materials_df.empty:
+                        material_row = materials_df[materials_df["ID"] == material_id]
+                        if not material_row.empty:
+                            total_quantity = int(material_row.iloc[0]["Количество штук"])
+                            material_parts.append(material_desc)
+                            stock_parts.append(str(total_quantity))
+
+                material_info = "; ".join(material_parts) if material_parts else ""
+                material_stock = "; ".join(stock_parts) if stock_parts else ""
+                remaining_reserved_count = "; ".join(remaining_count_list) if remaining_count_list else ""
 
             # Формируем текст для копирования
-            copy_text = (
-                f"{customer} | {order_name} | "
-                f"{detail_name} | "
-                f"Осталось: {remaining} | "
-                f"{reserved_metal} | "
-                f"{remaining_reserved}"
-            )
+            parts = [
+                f"{customer} | {order_name}",
+                f"{detail_name}",
+                f"Осталось: {remaining} шт"
+            ]
+
+            # Добавляем материал (если есть)
+            if material_info:
+                parts.append(f"Материал: {material_info}")
+            else:
+                parts.append("Материал: ")
+
+            # Добавляем остаток на складе (если есть)
+            if material_stock:
+                parts.append(f"Остаток на складе: {material_stock} шт")
+            else:
+                parts.append("Остаток на складе: ")
+
+            # Добавляем количество к списанию (если есть)
+            if remaining_reserved_count:
+                parts.append(f"Остаток порезать: {remaining_reserved_count} шт")
+            else:
+                parts.append("Остаток порезать: ")
+
+            copy_text = " | ".join(parts)
 
             # Копируем в буфер обмена
             self.root.clipboard_clear()
