@@ -2685,6 +2685,28 @@ class ProductionApp:
             command=self.refresh_order_details
         )
 
+        # ========== ОТЛАДКА ФИЛЬТРОВ ==========
+        print("=" * 50)
+        print("DEBUG: Проверка фильтров деталей заказа")
+        print(f"hasattr(self, 'order_detail_filters'): {hasattr(self, 'order_detail_filters')}")
+
+        if hasattr(self, 'order_detail_filters'):
+            print(f"self.order_detail_filters = {self.order_detail_filters}")
+            print(f"Тип: {type(self.order_detail_filters)}")
+            if isinstance(self.order_detail_filters, dict):
+                for key, value in self.order_detail_filters.items():
+                    print(f"  Ключ '{key}': значение '{value}' (тип: {type(value)})")
+        else:
+            print("Атрибут order_detail_filters НЕ СУЩЕСТВУЕТ")
+        print("=" * 50)
+
+        # ========== ФИЛЬТРЫ (ВРЕМЕННО ВСЕГДА АКТИВНЫ) ==========
+        # Пока отладка - делаем кнопку всегда активной
+        context_menu.add_command(
+            label="🔄  Сбросить фильтры",
+            command=self.clear_order_details_filters
+        )
+
         # Показываем меню
         try:
             context_menu.tk_popup(event.x_root, event.y_root)
@@ -3766,7 +3788,7 @@ class ProductionApp:
             self.writeoffs_excel_filter.clear_all_filters()
 
     def clear_details_filters(self):
-        """Сбро��ить все фильтры деталей"""
+        """Сбросить все фильтры деталей"""
         if hasattr(self, 'details_excel_filter'):
             self.details_excel_filter.clear_all_filters()
 
@@ -6504,7 +6526,7 @@ class ProductionApp:
         auto_count = 0
         pending_count = 0
 
-        # З��полняем таблицу ОТСОРТИРОВАННЫМИ данными
+        # Заполняем таблицу ОТСОРТИРОВАННЫМИ данными
         for idx, row_data in enumerate(sorted_data):
             date_val = row_data.get("Дата (МСК)", "")
             time_val = row_data.get("Време (МСК)", "")
