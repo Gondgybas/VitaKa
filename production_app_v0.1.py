@@ -1106,11 +1106,11 @@ class ProductionApp:
 
         self.materials_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # 🆕 ПРИВЯЗКА КОНТЕКСТНОГО МЕНЮ И ДВОЙНОГО КЛИКА
-        print("🔗 ПРИВЯЗЫВАЮ КОНТЕКСТНОЕ МЕНЮ К МАТЕРИАЛАМ")  # ← ДОБАВЬТЕ
+        # ==================== ПРИВЯЗКА КОНТЕКСТНОГО МЕНЮ ====================
+        print("🔗 ПРИВЯЗЫВАЮ КОНТЕКСТНОЕ МЕНЮ К МАТЕРИАЛАМ")
         self.materials_tree.bind('<Button-3>', self.on_materials_right_click)
         self.materials_tree.bind('<Double-Button-1>', self.on_materials_double_click)
-        print("✅ Привязка выполнена")  # ← ДОБАВЬТЕ
+        print("✅ Привязка выполнена")
 
         # ЦВЕТОВАЯ ИНДИКАЦИЯ
         self.materials_tree.tag_configure('negative', background='#f8d7da', foreground='#721c24')
@@ -1990,28 +1990,165 @@ class ProductionApp:
                 df = df[df["ID"] != item_id]
             save_data("Materials", df)
             self.refresh_materials()
-            self.refresh_balance()  # <-- ЭТА СТРОКА ДОЛЖНА БЫТЬ!
-            messagebox.showinfo("Успех", f"Удалено материалов: {count}")
-
-    def delete_material(self):
-        selected = self.materials_tree.selection()
-        if not selected:
-            messagebox.showwarning("Предупреждение", "Выберите материалы для удаления")
-            return
-        count = len(selected)
-        if messagebox.askyesno("Подтверждение", f"Удалить выбранные материалы ({count} шт)?"):
-            df = load_data("Materials")
-            for item in selected:
-                item_id = self.materials_tree.item(item)["values"][0]
-                df = df[df["ID"] != item_id]
-            save_data("Materials", df)
-            self.refresh_materials()
             self.refresh_balance()
             messagebox.showinfo("Успех", f"Удалено материалов: {count}")
 
-    # 🆕 МЕТОДЫ КОНТЕКСТНОГО МЕНЮ ДЛЯ МАТЕРИАЛОВ
+    # ==================== КОНТЕКСТНОЕ МЕНЮ ДЛЯ МАТЕРИАЛОВ ====================
 
-    # 🆕 УНИВЕРСАЛЬНОЕ КОНТЕКСТНОЕ МЕНЮ ДЛЯ МАТЕРИАЛОВ
+    def on_materials_right_click(self, event):
+        """Обработчик правого клика на таблице материалов"""
+        print(f"🖱️ ПРАВЫЙ КЛИК! x={event.x}, y={event.y}")
+
+        # Определяем регион клика
+        region = self.materials_tree.identify_region(event.x, event.y)
+        print(f"   Region: {region}")
+
+        # Если клик на заголовке - выходим (чтобы работал фильтр)
+        if region == "heading":
+            print("   -> Это заголовок, выходим")
+            return
+
+        # Определяем строку под курсором
+        item = self.materials_tree.identify_row(event.y)
+        print(f"   Item: {item}")
+
+        # Если клик на строке и она не выделена - выделяем
+        if item and item not in self.materials_tree.selection():
+            self.materials_tree.selection_set(item)
+
+        # Показываем универсальное меню
+        print("   -> Вызываю show_materials_context_menu")
+        self.show_materials_context_menu(event)
+
+    def show_materials_context_menu(self, event):
+        """Универсальное контекстное меню для таблицы материалов"""
+        print("📋 СОЗДАЮ КОНТЕКСТНОЕ МЕНЮ")
+
+        try:
+            selected_count = len(self.materials_tree.selection())
+            print(f"   Выбрано строк: {selected_count}")
+
+            # Создаём меню
+            context_menu = tk.Menu(self.root, tearoff=0, font=("Arial", 10))
+
+            # ========== ОПЕРАЦИИ С ВЫБРАННЫМИ СТРОКАМИ ==========
+            if selected_count > 0:
+                context_menu.add_command(
+                    label=f"📊 Выбрано: {selected_count} шт",
+                    state='disabled',
+                    foreground='#0c5460'
+                )
+                context_menu.add_separator()
+
+                # Редактирование (только для одной строки)
+                if selected_count == 1:
+                    context_menu.add_command(
+                        label="✏️  Редактировать",
+                        command=self.edit_material,
+                        accelerator="Двойной клик"
+                    )
+                else:
+                    context_menu.add_command(
+                        label=f"✏️  Редактировать (только для 1 строки)",
+                        command=lambda: messagebox.showwarning(
+                            "Множественное редактирование",
+                            "Редактирование доступно только для одной строки!\n\n"
+                            f"Выбрано строк: {selected_count}\n"
+                            "Снимите выделение с лишних строк."
+                        ),
+                        state='disabled'
+                    )
+
+                # Удаление
+                delete_label = f"🗑️  Удалить ({selected_count} шт)"
+                context_menu.add_command(
+                    label=delete_label,
+                    command=self.delete_material
+                )
+
+                context_menu.add_separator()
+
+            # ========== ОПЕРАЦИИ ДОБАВЛЕНИЯ (ВСЕГДА ДОСТУПНЫ) ==========
+            context_menu.add_command(
+                label="➕  Добавить материал",
+                command=self.add_material
+            )
+
+            context_menu.add_separator()
+
+            # ========== ОПЕРАЦИИ С EXCEL (ВСЕГДА ДОСТУПНЫ) ==========
+            context_menu.add_command(
+                label="📥  Импорт из Excel",
+                command=self.import_materials
+            )
+            context_menu.add_command(
+                label="📄  Скачать шаблон Excel",
+                command=self.download_template
+            )
+
+            context_menu.add_separator()
+
+            # ========== ДОПОЛНИТЕЛЬНЫЕ ОПЦИИ ==========
+            context_menu.add_command(
+                label="🔄  Обновить таблицу",
+                command=self.refresh_materials
+            )
+
+            # Показываем меню
+            print(f"   Показываю меню в позиции: x={event.x_root}, y={event.y_root}")
+            context_menu.tk_popup(event.x_root, event.y_root)
+        except Exception as e:
+            print(f"❌ ОШИБКА в show_materials_context_menu: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            try:
+                context_menu.grab_release()
+            except:
+                pass
+
+    def on_materials_double_click(self, event):
+        """Обработчик двойного клика - редактирование материала"""
+        print(f"🖱️ ДВОЙНОЙ КЛИК! x={event.x}, y={event.y}")
+
+        # Проверяем что клик был на строке, а не на пустом месте
+        region = self.materials_tree.identify_region(event.x, event.y)
+        item = self.materials_tree.identify_row(event.y)
+
+        print(f"   Region: {region}, Item: {item}")
+
+        # Если клик не на строке или на заголовке - выходим
+        if not item or region == "heading":
+            print("   -> Не на строке, выходим")
+            return
+
+        # Проверяем что выбрана ровно одна строка
+        selected_count = len(self.materials_tree.selection())
+        print(f"   Выбрано строк: {selected_count}")
+
+        if selected_count == 0:
+            # Строка под курсором не выделена - выделяем и редактируем
+            self.materials_tree.selection_set(item)
+            print("   -> Выделяю и редактирую")
+            self.edit_material()
+        elif selected_count == 1:
+            # Выделена одна строка - редактируем
+            print("   -> Редактирую")
+            self.edit_material()
+        else:
+            # Выделено несколько строк - показываем предупреждение
+            print("   -> Много строк, показываю предупреждение")
+            messagebox.showwarning(
+                "Множественное редактирование",
+                "Редактирование доступно только для одной строки!\n\n"
+                f"Выбрано строк: {selected_count}\n\n"
+                "Снимите выделение с лишних строк:\n"
+                "• Кликните на пустом месте таблицы\n"
+                "• Или используйте Ctrl+клик для снятия выделения"
+            )
+
+    # ==================== КОНЕЦ КОНТЕКСТНОГО МЕНЮ ====================
+
 
     def on_materials_right_click(self, event):
         """Обработчик правого клика на таблице материалов"""
