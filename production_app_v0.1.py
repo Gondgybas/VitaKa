@@ -1073,6 +1073,17 @@ class ProductionApp:
                           font=("Arial", 16, "bold"), bg='white', fg='#2c3e50')
         header.pack(pady=10)
 
+        # 🆕 ПОДСКАЗКА ПРО КОНТЕКСТНОЕ МЕНЮ
+        hint_label = tk.Label(
+            self.materials_frame,
+            text="💡 Нажмите правую кнопку мыши для вызова меню",
+            font=("Arial", 9, "italic"),
+            bg='#d1ecf1',
+            fg='#0c5460',
+            pady=5
+        )
+        hint_label.pack(fill=tk.X, padx=20)
+
         tree_frame = tk.Frame(self.materials_frame, bg='white')
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
@@ -1095,38 +1106,19 @@ class ProductionApp:
 
         self.materials_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # ЦВЕТОВАЯ ИНДИКАЦИЯ (КАК В БАЛАНСЕ)
+        # 🆕 ПРИВЯЗКА КОНТЕКСТНОГО МЕНЮ И ДВОЙНОГО КЛИКА
+        print("🔗 ПРИВЯЗЫВАЮ КОНТЕКСТНОЕ МЕНЮ К МАТЕРИАЛАМ")  # ← ДОБАВЬТЕ
+        self.materials_tree.bind('<Button-3>', self.on_materials_right_click)
+        self.materials_tree.bind('<Double-Button-1>', self.on_materials_double_click)
+        print("✅ Привязка выполнена")  # ← ДОБАВЬТЕ
+
+        # ЦВЕТОВАЯ ИНДИКАЦИЯ
         self.materials_tree.tag_configure('negative', background='#f8d7da', foreground='#721c24')
         self.materials_tree.tag_configure('available', background='#d4edda', foreground='#155724')
         self.materials_tree.tag_configure('fully_reserved', background='#fff3cd', foreground='#856404')
         self.materials_tree.tag_configure('empty', background='#d1ecf1', foreground='#0c5460')
 
-        # 🆕 ТЕСТОВАЯ ВСТАВКА ДЛЯ ПРОВЕРКИ РАБОТЫ ТЕГОВ
-        print("\n🧪 === ТЕСТОВАЯ ВСТАВКА ДЛЯ ПРОВЕРКИ ТЕГОВ ===")
-        test_negative = self.materials_tree.insert("", "end",
-                                                   values=("TEST1", "ТЕСТ", "1.0", "1000", "1000", "10", "10", "15",
-                                                           "-5", "2025-01-01"),
-                                                   tags=('negative',))
-        test_available = self.materials_tree.insert("", "end",
-                                                    values=("TEST2", "ТЕСТ", "2.0", "2000", "2000", "20", "20", "5",
-                                                            "15", "2025-01-01"),
-                                                    tags=('available',))
-        test_reserved = self.materials_tree.insert("", "end",
-                                                   values=("TEST3", "ТЕСТ", "3.0", "3000", "3000", "30", "30", "30",
-                                                           "0", "2025-01-01"),
-                                                   tags=('fully_reserved',))
-        test_empty = self.materials_tree.insert("", "end",
-                                                values=("TEST4", "ТЕСТ", "4.0", "4000", "4000", "0", "0", "0", "0",
-                                                        "2025-01-01"),
-                                                tags=('empty',))
-
-        print(f"   Вставлен TEST1 (negative): теги = {self.materials_tree.item(test_negative, 'tags')}")
-        print(f"   Вставлен TEST2 (available): теги = {self.materials_tree.item(test_available, 'tags')}")
-        print(f"   Вставлен TEST3 (fully_reserved): теги = {self.materials_tree.item(test_reserved, 'tags')}")
-        print(f"   Вставлен TEST4 (empty): теги = {self.materials_tree.item(test_empty, 'tags')}")
-        print(f"🧪 === ПРОВЕРЬТЕ ТАБЛИЦУ: ВИДНЫ ЛИ 4 ЦВЕТНЫЕ СТРОКИ? ===\n")
-
-        # 🆕 ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ МАТЕРИАЛОВ
+        # 🆕 ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА
         self.materials_excel_filter = ExcelStyleFilter(
             tree=self.materials_tree,
             refresh_callback=self.refresh_materials
@@ -1155,18 +1147,8 @@ class ProductionApp:
 
         buttons_frame = tk.Frame(self.materials_frame, bg='white')
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
-        btn_style = {"font": ("Arial", 10), "width": 15, "height": 2}
+        btn_style = {"font": ("Arial", 10), "width": 20, "height": 2}
 
-        tk.Button(buttons_frame, text="Добавить", bg='#27ae60', fg='white', command=self.add_material,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Импорт из Excel", bg='#9b59b6', fg='white', command=self.import_materials,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Скачать шаблон", bg='#3498db', fg='white', command=self.download_template,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Редактировать", bg='#f39c12', fg='white', command=self.edit_material,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Удалить", bg='#e74c3c', fg='white', command=self.delete_material,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(buttons_frame, text="✖ Сбросить фильтры", bg='#e67e22', fg='white',
                   command=self.clear_materials_filters, **btn_style).pack(side=tk.LEFT, padx=5)
 
@@ -2010,6 +1992,156 @@ class ProductionApp:
             self.refresh_materials()
             self.refresh_balance()  # <-- ЭТА СТРОКА ДОЛЖНА БЫТЬ!
             messagebox.showinfo("Успех", f"Удалено материалов: {count}")
+
+    def delete_material(self):
+        selected = self.materials_tree.selection()
+        if not selected:
+            messagebox.showwarning("Предупреждение", "Выберите материалы для удаления")
+            return
+        count = len(selected)
+        if messagebox.askyesno("Подтверждение", f"Удалить выбранные материалы ({count} шт)?"):
+            df = load_data("Materials")
+            for item in selected:
+                item_id = self.materials_tree.item(item)["values"][0]
+                df = df[df["ID"] != item_id]
+            save_data("Materials", df)
+            self.refresh_materials()
+            self.refresh_balance()
+            messagebox.showinfo("Успех", f"Удалено материалов: {count}")
+
+    # 🆕 МЕТОДЫ КОНТЕКСТНОГО МЕНЮ ДЛЯ МАТЕРИАЛОВ
+
+    # 🆕 УНИВЕРСАЛЬНОЕ КОНТЕКСТНОЕ МЕНЮ ДЛЯ МАТЕРИАЛОВ
+
+    def on_materials_right_click(self, event):
+        """Обработчик правого клика на таблице материалов"""
+        # Определяем регион клика
+        region = self.materials_tree.identify_region(event.x, event.y)
+
+        # Если клик на заголовке - выходим (чтобы работал фильтр)
+        if region == "heading":
+            return
+
+        # Определяем строку под курсором
+        item = self.materials_tree.identify_row(event.y)
+
+        # Если клик на строке и она не выделена - выделяем
+        if item and item not in self.materials_tree.selection():
+            self.materials_tree.selection_set(item)
+
+        # Показываем универсальное меню
+        self.show_materials_context_menu(event)
+
+    def show_materials_context_menu(self, event):
+        """Универсальное контекстное меню для таблицы материалов"""
+        selected_count = len(self.materials_tree.selection())
+
+        # Создаём меню
+        context_menu = tk.Menu(self.root, tearoff=0, font=("Arial", 10))
+
+        # ========== ОПЕРАЦИИ С ВЫБРАННЫМИ СТРОКАМИ ==========
+        if selected_count > 0:
+            context_menu.add_command(
+                label=f"📊 Выбрано: {selected_count} шт",
+                state='disabled',
+                foreground='#0c5460'
+            )
+            context_menu.add_separator()
+
+            # Редактирование (только для одной строки)
+            if selected_count == 1:
+                context_menu.add_command(
+                    label="✏️  Редактировать",
+                    command=self.edit_material,
+                    accelerator="Двойной клик"
+                )
+            else:
+                context_menu.add_command(
+                    label=f"✏️  Редактировать (только для 1 строки)",
+                    command=lambda: messagebox.showwarning(
+                        "Множественное редактирование",
+                        "Редактирование доступно только для одной строки!\n\n"
+                        f"Выбрано строк: {selected_count}\n"
+                        "Снимите выделение с лишних строк."
+                    ),
+                    state='disabled'
+                )
+
+            # Удаление
+            delete_label = f"🗑️  Удалить ({selected_count} шт)"
+            context_menu.add_command(
+                label=delete_label,
+                command=self.delete_material
+            )
+
+            context_menu.add_separator()
+
+        # ========== ОПЕРАЦИИ ДОБАВЛЕНИЯ (ВСЕГДА ДОСТУПНЫ) ==========
+        context_menu.add_command(
+            label="➕  Добавить материал",
+            command=self.add_material
+        )
+
+        context_menu.add_separator()
+
+        # ========== ОПЕРАЦИИ С EXCEL (ВСЕГДА ДОСТУПНЫ) ==========
+        context_menu.add_command(
+            label="📥  Импорт из Excel",
+            command=self.import_materials
+        )
+        context_menu.add_command(
+            label="📄  Скачать шаблон Excel",
+            command=self.download_template
+        )
+
+        context_menu.add_separator()
+
+        # ========== ДОПОЛНИТЕЛЬНЫЕ ОПЦИИ ==========
+        context_menu.add_command(
+            label="🔄  Обновить таблицу",
+            command=self.refresh_materials
+        )
+
+        # Показываем меню
+        try:
+            context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            context_menu.grab_release()
+
+    def show_materials_context_menu(self, event):
+        """Универсальное контекстное меню для таблицы материалов"""
+        # ... весь код метода ...
+
+    def on_materials_double_click(self, event):
+        """Обработчик двойного клика - редактирование материала"""
+        # Проверяем что клик был на строке, а не на пустом месте
+        region = self.materials_tree.identify_region(event.x, event.y)
+        item = self.materials_tree.identify_row(event.y)
+
+        # Если клик не на строке или на заголовке - выходим
+        if not item or region == "heading":
+            return
+
+        # Проверяем что выбрана ровно одна строка
+        selected_count = len(self.materials_tree.selection())
+
+        if selected_count == 0:
+            # Строка под курсором не выделена - выделяем и редактируем
+            self.materials_tree.selection_set(item)
+            self.edit_material()
+        elif selected_count == 1:
+            # Выделена одна строка - редактируем
+            self.edit_material()
+        else:
+            # Выделено несколько строк - показываем предупреждение
+            messagebox.showwarning(
+                "Множественное редактирование",
+                "Редактирование доступно только для одной строки!\n\n"
+                f"Выбрано строк: {selected_count}\n\n"
+                "Снимите выделение с лишних строк:\n"
+                "• Кликните на пустом месте таблицы\n"
+                "• Или используйте Ctrl+клик для снятия выделения"
+            )
 
     def setup_orders_tab(self):
         header = tk.Label(self.orders_frame, text="Управление заказами", font=("Arial", 16, "bold"), bg='white',
@@ -3377,7 +3509,7 @@ class ProductionApp:
             self.writeoffs_excel_filter.clear_all_filters()
 
     def clear_details_filters(self):
-        """Сбро��ить все фильтры деталей"""
+        """Сбросить все фильтры деталей"""
         if hasattr(self, 'details_excel_filter'):
             self.details_excel_filter.clear_all_filters()
 
@@ -6115,7 +6247,7 @@ class ProductionApp:
         auto_count = 0
         pending_count = 0
 
-        # З��полняем таблицу ОТСОРТИРОВАННЫМИ данными
+        # Заполняем таблицу ОТСОРТИРОВАННЫМИ данными
         for idx, row_data in enumerate(sorted_data):
             date_val = row_data.get("Дата (МСК)", "")
             time_val = row_data.get("Време (МСК)", "")
