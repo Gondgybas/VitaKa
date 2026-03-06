@@ -1106,19 +1106,41 @@ class ProductionApp:
 
         self.materials_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # ==================== ПРИВЯЗКА КОНТЕКСТНОГО МЕНЮ ====================
-        print("🔗 ПРИВЯЗЫВАЮ КОНТЕКСТНОЕ МЕНЮ К МАТЕРИАЛАМ")
+        # 🆕 ПРИВЯЗКА КОНТЕКСТНОГО МЕНЮ
         self.materials_tree.bind('<Button-3>', self.on_materials_right_click)
-        self.materials_tree.bind('<Double-Button-1>', self.on_materials_double_click)
-        print("✅ Привязка выполнена")
 
-        # ЦВЕТОВАЯ ИНДИКАЦИЯ
+        # ЦВЕТОВАЯ ИНДИКАЦИЯ (КАК В БАЛАНСЕ)
         self.materials_tree.tag_configure('negative', background='#f8d7da', foreground='#721c24')
         self.materials_tree.tag_configure('available', background='#d4edda', foreground='#155724')
         self.materials_tree.tag_configure('fully_reserved', background='#fff3cd', foreground='#856404')
         self.materials_tree.tag_configure('empty', background='#d1ecf1', foreground='#0c5460')
 
-        # 🆕 ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА
+        # 🆕 ТЕСТОВАЯ ВСТАВКА ДЛЯ ПРОВЕРКИ РАБОТЫ ТЕГОВ
+        print("\n🧪 === ТЕСТОВАЯ ВСТАВКА ДЛЯ ПРОВЕРКИ ТЕГОВ ===")
+        test_negative = self.materials_tree.insert("", "end",
+                                                   values=("TEST1", "ТЕСТ", "1.0", "1000", "1000", "10", "10", "15",
+                                                           "-5", "2025-01-01"),
+                                                   tags=('negative',))
+        test_available = self.materials_tree.insert("", "end",
+                                                    values=("TEST2", "ТЕСТ", "2.0", "2000", "2000", "20", "20", "5",
+                                                            "15", "2025-01-01"),
+                                                    tags=('available',))
+        test_reserved = self.materials_tree.insert("", "end",
+                                                   values=("TEST3", "ТЕСТ", "3.0", "3000", "3000", "30", "30", "30",
+                                                           "0", "2025-01-01"),
+                                                   tags=('fully_reserved',))
+        test_empty = self.materials_tree.insert("", "end",
+                                                values=("TEST4", "ТЕСТ", "4.0", "4000", "4000", "0", "0", "0", "0",
+                                                        "2025-01-01"),
+                                                tags=('empty',))
+
+        print(f"   Вставлен TEST1 (negative): теги = {self.materials_tree.item(test_negative, 'tags')}")
+        print(f"   Вставлен TEST2 (available): теги = {self.materials_tree.item(test_available, 'tags')}")
+        print(f"   Вставлен TEST3 (fully_reserved): теги = {self.materials_tree.item(test_reserved, 'tags')}")
+        print(f"   Вставлен TEST4 (empty): теги = {self.materials_tree.item(test_empty, 'tags')}")
+        print(f"🧪 === ПРОВЕРЬТЕ ТАБЛИЦУ: ВИДНЫ ЛИ 4 ЦВЕТНЫЕ СТРОКИ? ===\n")
+
+        # 🆕 ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ МАТЕРИАЛОВ
         self.materials_excel_filter = ExcelStyleFilter(
             tree=self.materials_tree,
             refresh_callback=self.refresh_materials
@@ -1990,253 +2012,60 @@ class ProductionApp:
                 df = df[df["ID"] != item_id]
             save_data("Materials", df)
             self.refresh_materials()
+            self.refresh_balance()  # <-- ЭТА СТРОКА ДОЛЖНА БЫТЬ!
+            messagebox.showinfo("Успех", f"Удалено материалов: {count}")
+
+    def delete_material(self):
+        selected = self.materials_tree.selection()
+        if not selected:
+            messagebox.showwarning("Предупреждение", "Выберите материалы для удаления")
+            return
+        count = len(selected)
+        if messagebox.askyesno("Подтверждение", f"Удалить выбранные материалы ({count} шт)?"):
+            df = load_data("Materials")
+            for item in selected:
+                item_id = self.materials_tree.item(item)["values"][0]
+                df = df[df["ID"] != item_id]
+            save_data("Materials", df)
+            self.refresh_materials()
             self.refresh_balance()
             messagebox.showinfo("Успех", f"Удалено материалов: {count}")
 
-    # ==================== КОНТЕКСТНОЕ МЕНЮ ДЛЯ МАТЕРИАЛОВ ====================
+    # 🆕 МЕТОДЫ КОНТЕКСТНОГО МЕНЮ ДЛЯ МАТЕРИАЛОВ
 
     def on_materials_right_click(self, event):
         """Обработчик правого клика на таблице материалов"""
-        print(f"🖱️ ПРАВЫЙ КЛИК! x={event.x}, y={event.y}")
-
-        # Определяем регион клика
-        region = self.materials_tree.identify_region(event.x, event.y)
-        print(f"   Region: {region}")
-
-        # Если клик на заголовке - выходим (чтобы работал фильтр)
-        if region == "heading":
-            print("   -> Это заголовок, выходим")
-            return
-
-        # Определяем строку под курсором
-        item = self.materials_tree.identify_row(event.y)
-        print(f"   Item: {item}")
-
-        # Если клик на строке и она не выделена - выделяем
-        if item and item not in self.materials_tree.selection():
-            self.materials_tree.selection_set(item)
-
-        # Показываем универсальное меню
-        print("   -> Вызываю show_materials_context_menu")
-        self.show_materials_context_menu(event)
-
-    def show_materials_context_menu(self, event):
-        """Универсальное контекстное меню для таблицы материалов"""
-        print("📋 СОЗДАЮ КОНТЕКСТНОЕ МЕНЮ")
-
-        try:
-            selected_count = len(self.materials_tree.selection())
-            print(f"   Выбрано строк: {selected_count}")
-
-            # Создаём меню
-            context_menu = tk.Menu(self.root, tearoff=0, font=("Arial", 10))
-
-            # ========== ОПЕРАЦИИ С ВЫБРАННЫМИ СТРОКАМИ ==========
-            if selected_count > 0:
-                context_menu.add_command(
-                    label=f"📊 Выбрано: {selected_count} шт",
-                    state='disabled',
-                    foreground='#0c5460'
-                )
-                context_menu.add_separator()
-
-                # Редактирование (только для одной строки)
-                if selected_count == 1:
-                    context_menu.add_command(
-                        label="✏️  Редактировать",
-                        command=self.edit_material,
-                        accelerator="Двойной клик"
-                    )
-                else:
-                    context_menu.add_command(
-                        label=f"✏️  Редактировать (только для 1 строки)",
-                        command=lambda: messagebox.showwarning(
-                            "Множественное редактирование",
-                            "Редактирование доступно только для одной строки!\n\n"
-                            f"Выбрано строк: {selected_count}\n"
-                            "Снимите выделение с лишних строк."
-                        ),
-                        state='disabled'
-                    )
-
-                # Удаление
-                delete_label = f"🗑️  Удалить ({selected_count} шт)"
-                context_menu.add_command(
-                    label=delete_label,
-                    command=self.delete_material
-                )
-
-                context_menu.add_separator()
-
-            # ========== ОПЕРАЦИИ ДОБАВЛЕНИЯ (ВСЕГДА ДОСТУПНЫ) ==========
-            context_menu.add_command(
-                label="➕  Добавить материал",
-                command=self.add_material
-            )
-
-            context_menu.add_separator()
-
-            # ========== ОПЕРАЦИИ С EXCEL (ВСЕГДА ДОСТУПНЫ) ==========
-            context_menu.add_command(
-                label="📥  Импорт из Excel",
-                command=self.import_materials
-            )
-            context_menu.add_command(
-                label="📄  Скачать шаблон Excel",
-                command=self.download_template
-            )
-
-            context_menu.add_separator()
-
-            # ========== ДОПОЛНИТЕЛЬНЫЕ ОПЦИИ ==========
-            context_menu.add_command(
-                label="🔄  Обновить таблицу",
-                command=self.refresh_materials
-            )
-
-            # Показываем меню
-            print(f"   Показываю меню в позиции: x={event.x_root}, y={event.y_root}")
-            context_menu.tk_popup(event.x_root, event.y_root)
-        except Exception as e:
-            print(f"❌ ОШИБКА в show_materials_context_menu: {e}")
-            import traceback
-            traceback.print_exc()
-        finally:
-            try:
-                context_menu.grab_release()
-            except:
-                pass
-
-    def on_materials_double_click(self, event):
-        """Обработчик двойного клика - редактирование материала"""
-        print(f"🖱️ ДВОЙНОЙ КЛИК! x={event.x}, y={event.y}")
-
-        # Проверяем что клик был на строке, а не на пустом месте
-        region = self.materials_tree.identify_region(event.x, event.y)
+        # Проверяем где клик: на строке или на пустом месте
         item = self.materials_tree.identify_row(event.y)
 
-        print(f"   Region: {region}, Item: {item}")
-
-        # Если клик не на строке или на заголовке - выходим
-        if not item or region == "heading":
-            print("   -> Не на строке, выходим")
-            return
-
-        # Проверяем что выбрана ровно одна строка
-        selected_count = len(self.materials_tree.selection())
-        print(f"   Выбрано строк: {selected_count}")
-
-        if selected_count == 0:
-            # Строка под курсором не выделена - выделяем и редактируем
-            self.materials_tree.selection_set(item)
-            print("   -> Выделяю и редактирую")
-            self.edit_material()
-        elif selected_count == 1:
-            # Выделена одна строка - редактируем
-            print("   -> Редактирую")
-            self.edit_material()
+        if item:
+            # Клик на строке - показываем меню для строк
+            self.show_materials_context_menu_row(event)
         else:
-            # Выделено несколько строк - показываем предупреждение
-            print("   -> Много строк, показываю предупреждение")
-            messagebox.showwarning(
-                "Множественное редактирование",
-                "Редактирование доступно только для одной строки!\n\n"
-                f"Выбрано строк: {selected_count}\n\n"
-                "Снимите выделение с лишних строк:\n"
-                "• Кликните на пустом месте таблицы\n"
-                "• Или используйте Ctrl+клик для снятия выделения"
-            )
+            # Клик на пустом месте - показываем меню для пустого места
+            self.show_materials_context_menu_empty(event)
 
-    # ==================== КОНЕЦ КОНТЕКСТНОГО МЕНЮ ====================
-
-
-    def on_materials_right_click(self, event):
-        """Обработчик правого клика на таблице материалов"""
-        # Определяем регион клика
-        region = self.materials_tree.identify_region(event.x, event.y)
-
-        # Если клик на заголовке - выходим (чтобы работал фильтр)
-        if region == "heading":
-            return
-
-        # Определяем строку под курсором
+    def show_materials_context_menu_empty(self, event):
+        """Контекстное меню при клике на пустое место таблицы материалов"""
+        # Проверяем что клик был НЕ на строке
         item = self.materials_tree.identify_row(event.y)
-
-        # Если клик на строке и она не выделена - выделяем
-        if item and item not in self.materials_tree.selection():
-            self.materials_tree.selection_set(item)
-
-        # Показываем универсальное меню
-        self.show_materials_context_menu(event)
-
-    def show_materials_context_menu(self, event):
-        """Универсальное контекстное меню для таблицы материалов"""
-        selected_count = len(self.materials_tree.selection())
+        if item:
+            return  # Если клик на строке - выходим
 
         # Создаём меню
-        context_menu = tk.Menu(self.root, tearoff=0, font=("Arial", 10))
-
-        # ========== ОПЕРАЦИИ С ВЫБРАННЫМИ СТРОКАМИ ==========
-        if selected_count > 0:
-            context_menu.add_command(
-                label=f"📊 Выбрано: {selected_count} шт",
-                state='disabled',
-                foreground='#0c5460'
-            )
-            context_menu.add_separator()
-
-            # Редактирование (только для одной строки)
-            if selected_count == 1:
-                context_menu.add_command(
-                    label="✏️  Редактировать",
-                    command=self.edit_material,
-                    accelerator="Двойной клик"
-                )
-            else:
-                context_menu.add_command(
-                    label=f"✏️  Редактировать (только для 1 строки)",
-                    command=lambda: messagebox.showwarning(
-                        "Множественное редактирование",
-                        "Редактирование доступно только для одной строки!\n\n"
-                        f"Выбрано строк: {selected_count}\n"
-                        "Снимите выделение с лишних строк."
-                    ),
-                    state='disabled'
-                )
-
-            # Удаление
-            delete_label = f"🗑️  Удалить ({selected_count} шт)"
-            context_menu.add_command(
-                label=delete_label,
-                command=self.delete_material
-            )
-
-            context_menu.add_separator()
-
-        # ========== ОПЕРАЦИИ ДОБАВЛЕНИЯ (ВСЕГДА ДОСТУПНЫ) ==========
+        context_menu = tk.Menu(self.root, tearoff=0)
         context_menu.add_command(
-            label="➕  Добавить материал",
+            label="➕ Добавить материал",
             command=self.add_material
         )
-
         context_menu.add_separator()
-
-        # ========== ОПЕРАЦИИ С EXCEL (ВСЕГДА ДОСТУПНЫ) ==========
         context_menu.add_command(
-            label="📥  Импорт из Excel",
+            label="📥 Импорт из Excel",
             command=self.import_materials
         )
         context_menu.add_command(
-            label="📄  Скачать шаблон Excel",
+            label="📄 Скачать шаблон Excel",
             command=self.download_template
-        )
-
-        context_menu.add_separator()
-
-        # ========== ДОПОЛНИТЕЛЬНЫЕ ОПЦИИ ==========
-        context_menu.add_command(
-            label="🔄  Обновить таблицу",
-            command=self.refresh_materials
         )
 
         # Показываем меню
@@ -2245,40 +2074,54 @@ class ProductionApp:
         finally:
             context_menu.grab_release()
 
-    def show_materials_context_menu(self, event):
-        """Универсальное контекстное меню для таблицы материалов"""
-        # ... весь код метода ...
-
-    def on_materials_double_click(self, event):
-        """Обработчик двойного клика - редактирование материала"""
-        # Проверяем что клик был на строке, а не на пустом месте
-        region = self.materials_tree.identify_region(event.x, event.y)
+    def show_materials_context_menu_row(self, event):
+        """Контекстное меню при клике на строку таблицы материалов"""
+        # Определяем строку под курсором
         item = self.materials_tree.identify_row(event.y)
-
-        # Если клик не на строке или на заголовке - выходим
-        if not item or region == "heading":
+        if not item:
             return
 
-        # Проверяем что выбрана ровно одна строка
+        # Если строка не выделена - выделяем её
+        if item not in self.materials_tree.selection():
+            self.materials_tree.selection_set(item)
+
         selected_count = len(self.materials_tree.selection())
 
-        if selected_count == 0:
-            # Строка под курсором не выделена - выделяем и редактируем
-            self.materials_tree.selection_set(item)
-            self.edit_material()
-        elif selected_count == 1:
-            # Выделена одна строка - редактируем
-            self.edit_material()
-        else:
-            # Выделено несколько строк - показываем предупреждение
-            messagebox.showwarning(
-                "Множественное редактирование",
-                "Редактирование доступно только для одной строки!\n\n"
-                f"Выбрано строк: {selected_count}\n\n"
-                "Снимите выделение с лишних строк:\n"
-                "• Кликните на пустом месте таблицы\n"
-                "• Или используйте Ctrl+клик для снятия выделения"
+        # Создаём меню
+        context_menu = tk.Menu(self.root, tearoff=0)
+
+        # Редактирование (только для одной строки)
+        if selected_count == 1:
+            context_menu.add_command(
+                label="✏️ Редактировать",
+                command=self.edit_material
             )
+        else:
+            context_menu.add_command(
+                label=f"✏️ Редактировать (выбрано: {selected_count})",
+                command=lambda: messagebox.showwarning(
+                    "Множественное редактирование",
+                    "Редактирование доступно только для одной строки!\n\n"
+                    f"Выбрано строк: {selected_count}\n"
+                    "Снимите выделение с лишних строк."
+                ),
+                state='disabled'
+            )
+
+        context_menu.add_separator()
+
+        # Удаление (доступно для любого количества)
+        delete_label = f"🗑️ Удалить ({selected_count} шт)" if selected_count > 1 else "🗑️ Удалить"
+        context_menu.add_command(
+            label=delete_label,
+            command=self.delete_material
+        )
+
+        # Показываем меню
+        try:
+            context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            context_menu.grab_release()
 
     def setup_orders_tab(self):
         header = tk.Label(self.orders_frame, text="Управление заказами", font=("Arial", 16, "bold"), bg='white',
@@ -3646,7 +3489,7 @@ class ProductionApp:
             self.writeoffs_excel_filter.clear_all_filters()
 
     def clear_details_filters(self):
-        """Сбросить все фильтры деталей"""
+        """Сбро��ить все фильтры деталей"""
         if hasattr(self, 'details_excel_filter'):
             self.details_excel_filter.clear_all_filters()
 
@@ -6384,7 +6227,7 @@ class ProductionApp:
         auto_count = 0
         pending_count = 0
 
-        # Заполняем таблицу ОТСОРТИРОВАННЫМИ данными
+        # З��полняем таблицу ОТСОРТИРОВАННЫМИ данными
         for idx, row_data in enumerate(sorted_data):
             date_val = row_data.get("Дата (МСК)", "")
             time_val = row_data.get("Време (МСК)", "")
