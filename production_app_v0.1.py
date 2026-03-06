@@ -1815,6 +1815,9 @@ class ProductionApp:
         self.order_details_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.order_details_tree.bind('<Double-1>', self.on_detail_double_click)
 
+        # Привязка правого клика для копирования
+        self.order_details_tree.bind('<Button-3>', self.on_detail_right_click)
+
         # ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ ДЕТАЛЕЙ
         self.order_details_excel_filter = ExcelStyleFilter(
             tree=self.order_details_tree,
@@ -2190,6 +2193,218 @@ class ProductionApp:
 
         except Exception as e:
             print(f"Ошибка в on_detail_double_click: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def on_detail_right_click(self, event):
+        """Контекстное меню при правом клике на деталь"""
+        # Определяем строку под курсором
+        item = self.order_details_tree.identify_row(event.y)
+        if not item:
+            return
+
+        # Выделяем строку
+        self.order_details_tree.selection_set(item)
+
+        # Создаём контекстное меню
+        context_menu = tk.Menu(self.root, tearoff=0)
+        context_menu.add_command(
+            label="📋 Копировать информацию о детали",
+            command=lambda: self.copy_detail_info(item)
+        )
+
+        # Показываем меню
+        try:
+            context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            context_menu.grab_release()
+
+    def copy_detail_info(self, item_id):
+        """Копирование информации о детали в буфер обмена"""
+        try:
+            # Получаем данные из строки таблицы
+            values = self.order_details_tree.item(item_id)["values"]
+            if not values or len(values) < 6:
+                messagebox.showwarning("Предупреждение", "Не удалось получить данные детали")
+                return
+
+            detail_id = values[0]
+            order_id = values[1]
+            detail_name = values[2]
+            quantity = int(values[3])
+            cut = int(values[4])
+            bent = int(values[5])
+
+            # Рассчитываем остаток для нарезки
+            remaining_to_cut = quantity - cut
+
+            # Загружаем данные заказа
+            orders_df = load_data("Orders")
+            order_row = orders_df[orders_df["ID заказа"] == order_id]
+
+            if order_row.empty:
+                customer = "Неизвестно"
+                order_name = "Неизвестно"
+            else:
+                customer = order_row.iloc[0]["Заказчик"]
+                order_name = order_row.iloc[0]["Название заказа"]
+
+            # Загружаем данные резервирования
+            reservations_df = load_data("Reservations")
+
+            # Ищем резервы для этой детали и заказа
+            detail_reserves = reservations_df[
+                (reservations_df["ID заказа"] == order_id) &
+                (reservations_df["ID детали"] == detail_id)
+                ]
+
+            if detail_reserves.empty:
+                reserved_metal = ""
+                remaining_reserved = ""
+            else:
+                # Собираем информацию о всех резервах
+                reserved_list = []
+                remaining_list = []
+
+                for _, reserve in detail_reserves.iterrows():
+                    marka = reserve["Марка"]
+                    thickness = reserve["Толщина"]
+                    width = reserve["Ширина"]
+                    length = reserve["Длина"]
+                    reserved_qty = int(reserve["Зарезервировано штук"])
+                    remaining_qty = int(reserve["Остаток к списанию"])
+
+                    metal_info = f"{marka} {thickness}мм {width}x{length} ({reserved_qty} шт)"
+                    reserved_list.append(metal_info)
+
+                    if remaining_qty > 0:
+                        remaining_info = f"{marka} {thickness}мм {width}x{length} ({remaining_qty} шт)"
+                        remaining_list.append(remaining_info)
+
+                reserved_metal = "; ".join(reserved_list) if reserved_list else ""
+                remaining_reserved = "; ".join(remaining_list) if remaining_list else ""
+
+            # Формируем текст для копирования
+            copy_text = (
+                f"{customer} | {order_name} | "
+                f"{detail_name} | "
+                f"Осталось: {remaining_to_cut} | "
+                f"{remaining_reserved}"
+            )
+
+            # Копируем в буфер обмена
+            self.root.clipboard_clear()
+            self.root.clipboard_append(copy_text)
+            self.root.update()  # Обновляем буфер обмена
+
+            # Показываем уведомление
+            messagebox.showinfo(
+                "Скопировано",
+                f"Информация о детали скопирована в буфер обмена:\n\n{copy_text}"
+            )
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось скопировать информацию: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def on_details_tab_right_click(self, event):
+        """Контекстное меню при правом клике на деталь во вкладке 'Учёт деталей'"""
+        # Определяем строку под курсором
+        item = self.details_tree.identify_row(event.y)
+        if not item:
+            return
+
+        # Выделяем строку
+        self.details_tree.selection_set(item)
+
+        # Создаём контекстное меню
+        context_menu = tk.Menu(self.root, tearoff=0)
+        context_menu.add_command(
+            label="📋 Копировать информацию о детали",
+            command=lambda: self.copy_details_tab_info(item)
+        )
+
+        # Показываем меню
+        try:
+            context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            context_menu.grab_release()
+
+    def copy_details_tab_info(self, item_id):
+        """Копирование информации о детали из вкладки 'Учёт деталей' в буфер обмена"""
+        try:
+            # Получаем данные из строки таблицы
+            values = self.details_tree.item(item_id)["values"]
+            if not values or len(values) < 9:
+                messagebox.showwarning("Предупреждение", "Не удалось получить данные детали")
+                return
+
+            detail_id = values[0]
+            customer = values[1]
+            detail_name = values[2]
+            order_name = values[3]
+            quantity = int(values[4])
+            cut = int(values[5])
+            bent = int(values[6])
+            remaining = int(values[7])
+
+            # Загружаем данные резервирования
+            reservations_df = load_data("Reservations")
+
+            # Ищем резервы для этой детали
+            detail_reserves = reservations_df[
+                reservations_df["ID детали"] == detail_id
+                ]
+
+            if detail_reserves.empty:
+                reserved_metal = ""
+                remaining_reserved = ""
+            else:
+                # Собираем информацию о всех резервах
+                reserved_list = []
+                remaining_list = []
+
+                for _, reserve in detail_reserves.iterrows():
+                    marka = reserve["Марка"]
+                    thickness = reserve["Толщина"]
+                    width = reserve["Ширина"]
+                    length = reserve["Длина"]
+                    reserved_qty = int(reserve["Зарезервировано штук"])
+                    remaining_qty = int(reserve["Остаток к списанию"])
+
+                    metal_info = f"{marka} {thickness}мм {width}x{length} ({reserved_qty} шт)"
+                    reserved_list.append(metal_info)
+
+                    if remaining_qty > 0:
+                        remaining_info = f"{marka} {thickness}мм {width}x{length} ({remaining_qty} шт)"
+                        remaining_list.append(remaining_info)
+
+                reserved_metal = "; ".join(reserved_list) if reserved_list else ""
+                remaining_reserved = "; ".join(remaining_list) if remaining_list else ""
+
+            # Формируем текст для копирования
+            copy_text = (
+                f"{customer} | {order_name} | "
+                f"{detail_name} | "
+                f"Осталось: {remaining} | "
+                f"{reserved_metal} | "
+                f"{remaining_reserved}"
+            )
+
+            # Копируем в буфер обмена
+            self.root.clipboard_clear()
+            self.root.clipboard_append(copy_text)
+            self.root.update()  # Обновляем буфер обмена
+
+            # Показываем уведомление
+            messagebox.showinfo(
+                "Скопировано",
+                f"Информация о детали скопирована в буфер обмена:\n\n{copy_text}"
+            )
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось скопировать информацию: {e}")
             import traceback
             traceback.print_exc()
 
@@ -4752,6 +4967,9 @@ class ProductionApp:
             self.details_tree.column(col, width=width, anchor=tk.CENTER)
 
         self.details_tree.pack(fill=tk.BOTH, expand=True)
+
+        # Привязка правого клика для копирования информации о детали
+        self.details_tree.bind('<Button-3>', self.on_details_tab_right_click)
 
         # Цветовые теги
         self.details_tree.tag_configure('completed', background='#c8e6c9', foreground='#1b5e20')  # Зелёный
