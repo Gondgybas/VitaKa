@@ -579,7 +579,7 @@ class ProductionApp:
         # Заголовок приложения
         title_label = tk.Label(
             header_frame,
-            text="⚙️ Система учета производства",
+            text="🏭 Система учета производства",
             font=("Arial", 16, "bold"),
             bg='#2c3e50',
             fg='white'
@@ -3286,6 +3286,11 @@ class ProductionApp:
         if hasattr(self, 'reservations_excel_filter'):
             self.reservations_excel_filter.clear_all_filters()
 
+    def clear_writeoffs_filters(self):
+        """Сбросить все фильтры списаний"""
+        if hasattr(self, 'writeoffs_excel_filter'):
+            self.writeoffs_excel_filter.clear_all_filters()
+
     def refresh_reservations(self):
         """Обновление списка резервов"""
 
@@ -4268,19 +4273,28 @@ class ProductionApp:
             "Количество": 90, "Дата": 140, "Комментарий": 180
         }
 
+        # Настройка колонок БЕЗ растягивания (как в других вкладках)
         for col, width in columns_config.items():
             self.writeoffs_tree.heading(col, text=col)
-            self.writeoffs_tree.column(col, width=width, anchor=tk.CENTER)
+            self.writeoffs_tree.column(col, width=width, anchor=tk.CENTER, minwidth=80, stretch=False)
 
-        self.writeoffs_tree.pack(fill=tk.BOTH, expand=True)
+        self.writeoffs_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Панель фильтрации
-        self.writeoffs_filters = self.create_filter_panel(
-            self.writeoffs_frame,
-            self.writeoffs_tree,
-            ["ID", "ID резерва", "Заказ", "Деталь", "Марка", "Толщина", "Количество"],
-            self.refresh_writeoffs
+        # 🆕 ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ СПИСАНИЙ
+        self.writeoffs_excel_filter = ExcelStyleFilter(
+            tree=self.writeoffs_tree,
+            refresh_callback=self.refresh_writeoffs
         )
+
+        # 🆕 ИНДИКАТОР АКТИВНЫХ ФИЛЬТРОВ
+        self.writeoffs_filter_status = tk.Label(
+            self.writeoffs_frame,
+            text="",
+            font=("Arial", 9),
+            bg='#d1ecf1',
+            fg='#0c5460'
+        )
+        self.writeoffs_filter_status.pack(pady=5)
 
         # Кнопки управления
         buttons_frame = tk.Frame(self.writeoffs_frame, bg='white')
@@ -4300,11 +4314,26 @@ class ProductionApp:
         tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white',
                   command=self.refresh_writeoffs, **btn_style).pack(side=tk.LEFT, padx=5)
 
+        tk.Button(buttons_frame, text="✖ Сбросить фильтры", bg='#e67e22', fg='white',
+                  command=self.clear_writeoffs_filters, **btn_style).pack(side=tk.LEFT, padx=5)
+
         self.refresh_writeoffs()
 
     def refresh_writeoffs(self):
+        """Обновление таблицы списаний"""
+
+        # СОХРАНЯЕМ АКТИВНЫЕ ФИЛЬТРЫ ПЕРЕД ОЧИСТКОЙ
+        active_filters_backup = {}
+        if hasattr(self, 'writeoffs_excel_filter') and self.writeoffs_excel_filter.active_filters:
+            active_filters_backup = self.writeoffs_excel_filter.active_filters.copy()
+
+        # ПОЛНОСТЬЮ ОЧИЩАЕМ ДЕРЕВО
         for i in self.writeoffs_tree.get_children():
             self.writeoffs_tree.delete(i)
+
+        # ОЧИЩАЕМ КЭШ ЭЛЕМЕНТОВ
+        if hasattr(self, 'writeoffs_excel_filter'):
+            self.writeoffs_excel_filter._all_item_cache = set()
 
         writeoffs_df = load_data("WriteOffs")
         orders_df = load_data("Orders")
@@ -4353,9 +4382,21 @@ class ProductionApp:
                     row["Комментарий"]
                 ]
 
-                self.writeoffs_tree.insert("", "end", values=values)
+                item_id = self.writeoffs_tree.insert("", "end", values=values)
 
-            self.auto_resize_columns(self.writeoffs_tree)  # ИСПРАВЛЕНО: убрана лишняя скобка
+                # СОХРАНЯЕМ item_id В КЭШ
+                if hasattr(self, 'writeoffs_excel_filter'):
+                    if not hasattr(self.writeoffs_excel_filter, '_all_item_cache'):
+                        self.writeoffs_excel_filter._all_item_cache = set()
+                    self.writeoffs_excel_filter._all_item_cache.add(item_id)
+
+            # АВТОПОДБОР ШИРИНЫ КОЛОНОК (как в других вкладках)
+            self.auto_resize_columns(self.writeoffs_tree, min_width=80, max_width=300)
+
+            # ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ ПОСЛЕ ЗАГРУЗКИ ДАННЫХ
+            if active_filters_backup and hasattr(self, 'writeoffs_excel_filter'):
+                self.writeoffs_excel_filter.active_filters = active_filters_backup
+                self.writeoffs_excel_filter.reapply_all_filters()
 
     def add_writeoff(self):
         reservations_df = load_data("Reservations")
