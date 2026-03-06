@@ -1747,6 +1747,20 @@ class ProductionApp:
         self.refresh_material_logs()
 
     def refresh_material_logs(self):
+        # 🆕 СОХРАНЯЕМ АКТИВНЫЕ ФИЛЬТРЫ ПЕРЕД ОЧИСТКОЙ
+        active_filters_backup = {}
+        if hasattr(self, 'material_logs_excel_filter') and self.material_logs_excel_filter.active_filters:
+            active_filters_backup = self.material_logs_excel_filter.active_filters.copy()
+            print(f"🔍 Сохранены фильтры истории: {list(active_filters_backup.keys())}")
+
+        # Очищаем таблицу
+        for item in self.material_logs_tree.get_children():
+            self.material_logs_tree.delete(item)
+
+        # 🆕 ОЧИЩАЕМ КЭШ
+        if hasattr(self, 'material_logs_excel_filter'):
+            self.material_logs_excel_filter._all_item_cache = set()
+
         """Обновление таблицы логов"""
         for item in self.material_logs_tree.get_children():
             self.material_logs_tree.delete(item)
@@ -1874,19 +1888,24 @@ class ProductionApp:
 
     def refresh_material_logs(self):
         """Обновление таблицы логов"""
+
+        # 🆕 СОХРАНЯЕМ АКТИВНЫЕ ФИЛЬТРЫ ПЕРЕД ОЧИСТКОЙ
+        active_filters_backup = {}
+        if hasattr(self, 'material_logs_excel_filter') and self.material_logs_excel_filter.active_filters:
+            active_filters_backup = self.material_logs_excel_filter.active_filters.copy()
+
+        # Очищаем таблицу
         for item in self.material_logs_tree.get_children():
             self.material_logs_tree.delete(item)
+
+        # 🆕 ОЧИЩАЕМ КЭШ
+        if hasattr(self, 'material_logs_excel_filter'):
+            self.material_logs_excel_filter._all_item_cache = set()
 
         try:
             logs_df = load_data("MaterialChangeLogs")
 
             if not logs_df.empty:
-                # 🆕 ДИАГНОСТИКА: проверяем формат данных
-                print(f"🔍 Загружено логов: {len(logs_df)}")
-                if len(logs_df) > 0:
-                    first_change = logs_df.iloc[0]["Изменение"]
-                    print(f"🔍 Первая запись 'Изменение': '{first_change}' (тип: {type(first_change).__name__})")
-
                 # Сортируем по дате (новые сверху)
                 logs_df = logs_df.sort_values("Дата и время", ascending=False)
 
@@ -1914,27 +1933,32 @@ class ProductionApp:
                         size_str,
                         int(log["Старое кол-во"]),
                         int(log["Новое кол-во"]),
-                        change_str,  # ← ИСПОЛЬЗУЕМ ПРЕОБРАЗОВАННУЮ СТРОКУ
+                        change_str,
                         log["Комментарий"]
                     )
 
                     # 🆕 ПРАВИЛЬНАЯ ЦВЕТОВАЯ ИНДИКАЦИЯ
                     try:
-                        # Пробуем распарсить изменение как число
                         change_num = int(change_str.replace('+', '').replace(' ', ''))
 
                         if change_num > 0:
-                            tag = 'increase'  # Зелёный (добавление)
+                            tag = 'increase'
                             increase_count += 1
                         elif change_num < 0:
-                            tag = 'decrease'  # Красный (уменьшение)
+                            tag = 'decrease'
                             decrease_count += 1
                         else:
                             tag = 'neutral'
                     except:
                         tag = 'neutral'
 
-                    self.material_logs_tree.insert("", "end", values=values, tags=(tag,))
+                    item_id = self.material_logs_tree.insert("", "end", values=values, tags=(tag,))
+
+                    # 🆕 СОХРАНЯЕМ В КЭШ
+                    if hasattr(self, 'material_logs_excel_filter'):
+                        if not hasattr(self.material_logs_excel_filter, '_all_item_cache'):
+                            self.material_logs_excel_filter._all_item_cache = set()
+                        self.material_logs_excel_filter._all_item_cache.add(item_id)
 
                 # 🆕 ОБНОВЛЯЕМ СТАТУС
                 total = len(logs_df)
@@ -1944,8 +1968,6 @@ class ProductionApp:
                     f"🟢 Добавлений: {increase_count} | "
                     f"🔴 Уменьшений: {decrease_count}"
                 )
-
-                print(f"📊 Статистика: всего={total}, добавлений={increase_count}, уменьшений={decrease_count}")
 
                 self.material_logs_status.config(text=status_text, bg='#d1ecf1', fg='#0c5460')
             else:
@@ -1957,15 +1979,21 @@ class ProductionApp:
 
             self.auto_resize_columns(self.material_logs_tree)
 
+            # 🆕 ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ
+            if active_filters_backup and hasattr(self, 'material_logs_excel_filter'):
+                self.material_logs_excel_filter.active_filters = active_filters_backup
+                self.material_logs_excel_filter.reapply_all_filters()
+
         except Exception as e:
             print(f"⚠️ Ошибка загрузки логов: {e}")
             import traceback
             traceback.print_exc()
-            self.material_logs_status.config(
-                text=f"❌ Ошибка загрузки: {e}",
-                bg='#f8d7da',
-                fg='#721c24'
-            )
+            if hasattr(self, 'material_logs_status'):
+                self.material_logs_status.config(
+                    text=f"❌ Ошибка загрузки: {e}",
+                    bg='#f8d7da',
+                    fg='#721c24'
+                )
 
     def delete_material(self):
         selected = self.materials_tree.selection()
