@@ -1664,11 +1664,28 @@ class ProductionApp:
             "Комментарий": 250
         }
 
+        # Настройка колонок БЕЗ растягивания
         for col, width in columns_config.items():
             self.material_logs_tree.heading(col, text=col)
-            self.material_logs_tree.column(col, width=width, anchor=tk.CENTER)
+            self.material_logs_tree.column(col, width=width, anchor=tk.CENTER, minwidth=80, stretch=False)
 
-        self.material_logs_tree.pack(fill=tk.BOTH, expand=True)
+        self.material_logs_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # 🆕 ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ ИСТОРИИ МАТЕРИАЛОВ
+        self.material_logs_excel_filter = ExcelStyleFilter(
+            tree=self.material_logs_tree,
+            refresh_callback=self.refresh_material_logs
+        )
+
+        # 🆕 ИНДИКАТОР АКТИВНЫХ ФИЛЬТРОВ
+        self.material_logs_filter_status = tk.Label(
+            self.material_logs_frame,
+            text="",
+            font=("Arial", 9),
+            bg='#d1ecf1',
+            fg='#0c5460'
+        )
+        self.material_logs_filter_status.pack(pady=5)
 
         # 🆕 ЦВЕТОВАЯ ИНДИКАЦИЯ СТРОК (ЗЕЛЁНЫЙ = ДОБАВЛЕНИЕ, КРАСНЫЙ = УМЕНЬШЕНИЕ)
         self.material_logs_tree.tag_configure('increase', background='#d4edda')  # Зелёный
@@ -1702,6 +1719,9 @@ class ProductionApp:
 
         tk.Button(buttons_frame, text="Экспорт в Excel", bg='#3498db', fg='white',
                   command=self.export_material_logs, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(buttons_frame, text="✖ Сбросить фильтры", bg='#e67e22', fg='white',
+                  command=self.clear_material_logs_filters, **btn_style).pack(side=tk.LEFT, padx=5)
 
         # Первоначальная загрузка
         self.refresh_material_logs()
@@ -1743,7 +1763,13 @@ class ProductionApp:
                     else:
                         tag = 'neutral'
 
-                    self.material_logs_tree.insert("", "end", values=values, tags=(tag,))
+                    item_id = self.material_logs_tree.insert("", "end", values=values, tags=(tag,))
+
+                    # СОХРАНЯЕМ item_id В КЭШ
+                    if hasattr(self, 'material_logs_excel_filter'):
+                        if not hasattr(self.material_logs_excel_filter, '_all_item_cache'):
+                            self.material_logs_excel_filter._all_item_cache = set()
+                        self.material_logs_excel_filter._all_item_cache.add(item_id)
 
                 # 🆕 ОБНОВЛЯЕМ СТАТУС
                 total = len(logs_df)
@@ -1763,7 +1789,13 @@ class ProductionApp:
                     fg='#856404'
                 )
 
-            self.auto_resize_columns(self.material_logs_tree)
+            # АВТОПОДБОР ШИРИНЫ КОЛОНОК
+            self.auto_resize_columns(self.material_logs_tree, min_width=80, max_width=300)
+
+            # ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ
+            if active_filters_backup and hasattr(self, 'material_logs_excel_filter'):
+                self.material_logs_excel_filter.active_filters = active_filters_backup
+                self.material_logs_excel_filter.reapply_all_filters()
 
         except Exception as e:
             print(f"⚠️ Ошибка загрузки логов: {e}")
@@ -2072,6 +2104,11 @@ class ProductionApp:
         """Сбросить все фильтры деталей заказа"""
         if hasattr(self, 'order_details_excel_filter'):
             self.order_details_excel_filter.clear_all_filters()
+
+    def clear_material_logs_filters(self):
+        """Сбросить все фильтры истории материалов"""
+        if hasattr(self, 'material_logs_excel_filter'):
+            self.material_logs_excel_filter.clear_all_filters()
 
     def on_order_select(self, event):
         self.refresh_order_details()
@@ -3290,6 +3327,16 @@ class ProductionApp:
         """Сбросить все фильтры списаний"""
         if hasattr(self, 'writeoffs_excel_filter'):
             self.writeoffs_excel_filter.clear_all_filters()
+
+    def clear_details_filters(self):
+        """Сбро��ить все фильтры деталей"""
+        if hasattr(self, 'details_excel_filter'):
+            self.details_excel_filter.clear_all_filters()
+
+    def clear_laser_import_filters(self):
+        """Сбросить все фильтры импорта от лазерщиков"""
+        if hasattr(self, 'laser_import_excel_filter'):
+            self.laser_import_excel_filter.clear_all_filters()
 
     def refresh_reservations(self):
         """Обновление списка резервов"""
@@ -5146,6 +5193,9 @@ class ProductionApp:
         tk.Button(buttons_frame, text="💾 Экспорт таблицы", bg='#9b59b6', fg='white',
                   command=self.export_laser_table, **btn_style).pack(side=tk.LEFT, padx=5)
 
+        tk.Button(buttons_frame, text="✖ Сбросить фильтры", bg='#e67e22', fg='white',
+                  command=self.clear_laser_import_filters, **btn_style).pack(side=tk.LEFT, padx=5)
+
         # Метка таблицы
         table_label = tk.Label(self.laser_import_frame,
                                text="📊 Импортированные данные (выберите строки для списания)",
@@ -5192,12 +5242,28 @@ class ProductionApp:
             "Дата списания": 150
         }
 
+        # Настройка колонок БЕЗ растягивания
         for col, width in columns_config.items():
             self.laser_import_tree.heading(col, text=col)
-            self.laser_import_tree.column(col, width=width, anchor=tk.CENTER)
+            self.laser_import_tree.column(col, width=width, anchor=tk.CENTER, minwidth=80, stretch=False)
 
-        # 🆕 ВАЖНО: pack() ПОСЛЕ настройки колонок
         self.laser_import_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # 🆕 ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ ИМПОРТА
+        self.laser_import_excel_filter = ExcelStyleFilter(
+            tree=self.laser_import_tree,
+            refresh_callback=self.refresh_laser_import_table
+        )
+
+        # 🆕 ИНДИКАТОР АКТИВНЫХ ФИЛЬТРОВ
+        self.laser_import_filter_status = tk.Label(
+            self.laser_import_frame,
+            text="",
+            font=("Arial", 9),
+            bg='#d1ecf1',
+            fg='#0c5460'
+        )
+        self.laser_import_filter_status.pack(pady=5)
 
         # Цветовая индикация
         self.laser_import_tree.tag_configure('written_off', background='#c8e6c9', foreground='#1b5e20')
@@ -5283,11 +5349,28 @@ class ProductionApp:
             "Прогресс %": 100
         }
 
+        # Настройка колонок БЕЗ растягивания
         for col, width in columns_config.items():
             self.details_tree.heading(col, text=col)
-            self.details_tree.column(col, width=width, anchor=tk.CENTER)
+            self.details_tree.column(col, width=width, anchor=tk.CENTER, minwidth=80, stretch=False)
 
-        self.details_tree.pack(fill=tk.BOTH, expand=True)
+        self.details_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # 🆕 ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ ДЕТАЛЕЙ
+        self.details_excel_filter = ExcelStyleFilter(
+            tree=self.details_tree,
+            refresh_callback=self.refresh_details
+        )
+
+        # 🆕 ИНДИКАТОР АКТИВНЫХ ФИЛЬТРОВ
+        self.details_filter_status = tk.Label(
+            self.details_frame,
+            text="",
+            font=("Arial", 9),
+            bg='#d1ecf1',
+            fg='#0c5460'
+        )
+        self.details_filter_status.pack(pady=5)
 
         # Привязка правого клика для копирования информации о детали
         self.details_tree.bind('<Button-3>', self.on_details_tab_right_click)
@@ -5298,14 +5381,6 @@ class ProductionApp:
         self.details_tree.tag_configure('not_started', background='#ffffff', foreground='#000000')  # Белый
         self.details_tree.tag_configure('over_cut', background='#ffcccc',
                                         foreground='#b71c1c')  # Красный (если порезано больше)
-
-        # Панель фильтрации
-        self.details_filters = self.create_filter_panel(
-            self.details_frame,
-            self.details_tree,
-            ["Заказчик", "Название детали", "Заказ"],
-            self.refresh_details
-        )
 
         # Переключатели видимости
         toggles_frame = tk.LabelFrame(self.details_frame, text="⚙️ Настройки отображения",
@@ -5340,6 +5415,9 @@ class ProductionApp:
         tk.Button(buttons_frame, text="🔄 Обновить", bg='#3498db', fg='white',
                   command=self.refresh_details, **btn_style).pack(side=tk.LEFT, padx=5)
 
+        tk.Button(buttons_frame, text="✖ Сбросить фильтры", bg='#e67e22', fg='white',
+                  command=self.clear_details_filters, **btn_style).pack(side=tk.LEFT, padx=5)
+
         tk.Button(buttons_frame, text="📊 Экспорт в Excel", bg='#27ae60', fg='white',
                   command=self.export_details, **btn_style).pack(side=tk.LEFT, padx=5)
 
@@ -5365,6 +5443,162 @@ class ProductionApp:
 
     def refresh_details(self):
         """Обновление таблицы деталей"""
+
+        def safe_int(value, default=0):
+            if value == "" or pd.isna(value) or value is None:
+                return default
+            try:
+                return int(value)
+            except (ValueError, TypeError):
+                return default
+
+        # СОХРАНЯЕМ АКТИВНЫЕ ФИЛЬТРЫ ПЕРЕД ОЧИСТКОЙ
+        active_filters_backup = {}
+        if hasattr(self, 'details_excel_filter') and self.details_excel_filter.active_filters:
+            active_filters_backup = self.details_excel_filter.active_filters.copy()
+
+        # Очищаем таблицу
+        for item in self.details_tree.get_children():
+            self.details_tree.delete(item)
+
+        # ОЧИЩАЕМ КЭШ ЭЛЕМЕНТОВ
+        if hasattr(self, 'details_excel_filter'):
+            self.details_excel_filter._all_item_cache = set()
+
+        # Загружаем данные
+        orders_df = load_data("Orders")
+        order_details_df = load_data("OrderDetails")
+
+        if orders_df.empty or order_details_df.empty:
+            if hasattr(self, 'details_status_label'):
+                self.details_status_label.config(
+                    text="⚠️ Нет данных о деталях",
+                    bg='#fff3cd',
+                    fg='#856404'
+                )
+            return
+
+        # 🆕 ОЧИСТКА ПУСТЫХ ЗНАЧЕНИЙ
+        order_details_df["Количество"] = order_details_df["Количество"].replace("", 0)
+        order_details_df["Порезано"] = order_details_df["Порезано"].replace("", 0)
+        order_details_df["Погнуто"] = order_details_df["Погнуто"].replace("", 0)
+
+        # Сохраняем очищенные данные
+        save_data("OrderDetails", order_details_df)
+
+        # Читаем переключатели
+        show_completed = self.details_toggles['show_completed'].get()
+        show_in_progress = self.details_toggles['show_in_progress'].get()
+        show_not_started = self.details_toggles['show_not_started'].get()
+
+        # Фильтруем заказы со статусом "В работе"
+        active_orders = orders_df[orders_df["Статус"] == "В работе"]
+
+        if active_orders.empty:
+            if hasattr(self, 'details_status_label'):
+                self.details_status_label.config(
+                    text="ℹ️ Нет заказов в работе",
+                    bg='#d1ecf1',
+                    fg='#0c5460'
+                )
+            return
+
+        # Счётчики
+        total_count = 0
+        shown_count = 0
+        completed_count = 0
+        in_progress_count = 0
+        not_started_count = 0
+
+        # Проходим по всем деталям активных заказов
+        for _, order_row in active_orders.iterrows():
+            order_id = int(order_row["ID заказа"])
+            order_name = order_row["Название заказа"]
+            customer_name = order_row["Заказчик"]
+
+            # Получаем детали этого заказа
+            order_details = order_details_df[order_details_df["ID заказа"] == order_id]
+
+            for _, detail_row in order_details.iterrows():
+                detail_id = int(detail_row["ID"])
+                detail_name = detail_row["Название детали"]
+                quantity = safe_int(detail_row["Количество"])
+                cut = safe_int(detail_row.get("Порезано", 0))
+                bent = safe_int(detail_row.get("Погнуто", 0))
+
+                # Рассчитываем остаток и прогресс
+                remaining = quantity - cut
+                progress_pct = round((cut / quantity * 100), 1) if quantity > 0 else 0
+
+                total_count += 1
+
+                # Определяем статус
+                if cut >= quantity:
+                    status = 'completed'
+                    completed_count += 1
+                    if not show_completed:
+                        continue
+                elif cut > 0:
+                    status = 'in_progress'
+                    in_progress_count += 1
+                    if not show_in_progress:
+                        continue
+                else:
+                    status = 'not_started'
+                    not_started_count += 1
+                    if not show_not_started:
+                        continue
+
+                # Формируем значения
+                values = (
+                    detail_id,
+                    customer_name,
+                    detail_name,
+                    order_name,
+                    quantity,
+                    cut,
+                    bent,
+                    remaining,
+                    f"{progress_pct}%"
+                )
+
+                # Цветовая индикация с учётом перепорезки
+                if cut > quantity:
+                    tag = 'over_cut'
+                else:
+                    tag = status
+
+                item_id = self.details_tree.insert("", "end", values=values, tags=(tag,))
+                shown_count += 1
+
+                # СОХРАНЯЕМ item_id В КЭШ
+                if hasattr(self, 'details_excel_filter'):
+                    if not hasattr(self.details_excel_filter, '_all_item_cache'):
+                        self.details_excel_filter._all_item_cache = set()
+                    self.details_excel_filter._all_item_cache.add(item_id)
+
+        # АВТОПОДБОР ШИРИНЫ КОЛОНОК
+        self.auto_resize_columns(self.details_tree, min_width=80, max_width=300)
+
+        # ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ
+        if active_filters_backup and hasattr(self, 'details_excel_filter'):
+            self.details_excel_filter.active_filters = active_filters_backup
+            self.details_excel_filter.reapply_all_filters()
+
+        # Обновляем статусную строку
+        if hasattr(self, 'details_status_label'):
+            status_text = (
+                f"📊 Отображено: {shown_count} из {total_count} | "
+                f"🟢 Завершено: {completed_count} | "
+                f"🟡 В процессе: {in_progress_count} | "
+                f"⚪ Не начато: {not_started_count}"
+            )
+
+            self.details_status_label.config(
+                text=status_text,
+                bg='#d4edda',
+                fg='#155724'
+            )
 
         def safe_int(value, default=0):
             if value == "" or pd.isna(value) or value is None:
@@ -5519,10 +5753,22 @@ class ProductionApp:
                 else:
                     tag = status
 
-                self.details_tree.insert("", "end", values=values, tags=(tag,))
+                item_id = self.details_tree.insert("", "end", values=values, tags=(tag,))
                 shown_count += 1
 
-        self.auto_resize_columns(self.details_tree)
+                # СОХРАНЯЕМ item_id В КЭШ
+                if hasattr(self, 'details_excel_filter'):
+                    if not hasattr(self.details_excel_filter, '_all_item_cache'):
+                        self.details_excel_filter._all_item_cache = set()
+                    self.details_excel_filter._all_item_cache.add(item_id)
+
+        # АВТОПОДБОР ШИРИНЫ КОЛОНОК
+        self.auto_resize_columns(self.details_tree, min_width=80, max_width=300)
+
+        # ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ
+        if active_filters_backup and hasattr(self, 'details_excel_filter'):
+            self.details_excel_filter.active_filters = active_filters_backup
+            self.details_excel_filter.reapply_all_filters()
 
         # Обновляем статусную строку
         if hasattr(self, 'details_status_label'):
@@ -5838,9 +6084,21 @@ class ProductionApp:
                 tag = 'pending'
                 pending_count += 1
 
-            self.laser_import_tree.insert("", "end", values=values, tags=(tag,))
+            item_id = self.laser_import_tree.insert("", "end", values=values, tags=(tag,))
 
-        self.auto_resize_columns(self.laser_import_tree)
+            # СОХРАНЯЕМ item_id В КЭШ
+            if hasattr(self, 'laser_import_excel_filter'):
+                if not hasattr(self.laser_import_excel_filter, '_all_item_cache'):
+                    self.laser_import_excel_filter._all_item_cache = set()
+                self.laser_import_excel_filter._all_item_cache.add(item_id)
+
+        # АВТОПОДБОР ШИРИНЫ КОЛОНОК
+        self.auto_resize_columns(self.laser_import_tree, min_width=80, max_width=400)
+
+        # ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ
+        if active_filters_backup and hasattr(self, 'laser_import_excel_filter'):
+            self.laser_import_excel_filter.active_filters = active_filters_backup
+            self.laser_import_excel_filter.reapply_all_filters()
 
         print(f"📊 Отображено: 🔵 Синих={manual_count}, 🟢 Зелёных={auto_count}, 🟡 Жёлтых={pending_count}")
 
