@@ -2615,20 +2615,86 @@ class ProductionApp:
             traceback.print_exc()
 
     def on_detail_right_click(self, event):
-        """Контекстное меню при правом клике на деталь"""
-        # Определяем строку под курсором
-        item = self.order_details_tree.identify_row(event.y)
-        if not item:
+        """Контекстное меню при правом клике на деталь заказа"""
+        # Определяем регион клика
+        region = self.order_details_tree.identify_region(event.x, event.y)
+
+        # Если клик на заголовке - выходим (чтобы работал фильтр)
+        if region == "heading":
             return
 
-        # Выделяем строку
-        self.order_details_tree.selection_set(item)
+        # Определяем строку под курсором
+        item = self.order_details_tree.identify_row(event.y)
 
-        # Создаём контекстное меню
-        context_menu = tk.Menu(self.root, tearoff=0)
+        # Если клик на строке и она не выделена - выделяем
+        if item and item not in self.order_details_tree.selection():
+            self.order_details_tree.selection_set(item)
+
+        # Показываем универсальное меню
+        self.show_detail_context_menu(event)
+
+    def show_detail_context_menu(self, event):
+        """Универсальное контекстное меню для деталей заказа"""
+        selected_count = len(self.order_details_tree.selection())
+
+        # Создаём меню
+        context_menu = tk.Menu(self.root, tearoff=0, font=("Arial", 10))
+
+        # ========== ОПЕРАЦИИ С ВЫБРАННЫМИ СТРОКАМИ ==========
+        if selected_count > 0:
+            context_menu.add_command(
+                label=f"📊 Выбрано: {selected_count} шт",
+                state='disabled',
+                foreground='#0c5460'
+            )
+            context_menu.add_separator()
+
+            # Редактирование (только для одной строки)
+            if selected_count == 1:
+                context_menu.add_command(
+                    label="✏️  Редактировать деталь",
+                    command=self.edit_order_detail,
+                )
+
+                context_menu.add_command(
+                    label="📋  Копировать информацию",
+                    command=lambda: self.copy_detail_info(self.order_details_tree.selection()[0])
+                )
+            else:
+                context_menu.add_command(
+                    label=f"✏️  Редактировать (только для 1 детали)",
+                    state='disabled'
+                )
+
+            # Удаление
+            delete_label = f"🗑️  Удалить ({selected_count} шт)"
+            context_menu.add_command(
+                label=delete_label,
+                command=self.delete_order_detail
+            )
+
+            context_menu.add_separator()
+
+        # ========== ОПЕРАЦИИ ДОБАВЛЕНИЯ (ВСЕГДА ДОСТУПНЫ) ==========
+        # Проверяем выбран ли заказ
+        selected_order = self.orders_tree.selection()
+        if selected_order:
+            context_menu.add_command(
+                label="➕  Добавить деталь к заказу",
+                command=self.add_order_detail,
+            )
+        else:
+            context_menu.add_command(
+                label="➕  Добавить деталь (выберите заказ)",
+                state='disabled'
+            )
+
+        context_menu.add_separator()
+
+        # ========== ДОПОЛНИТЕЛЬНЫЕ ОПЦИИ ==========
         context_menu.add_command(
-            label="📋 Копировать информацию о детали",
-            command=lambda: self.copy_detail_info(item)
+            label="🔄  Обновить таблицу",
+            command=self.refresh_order_details
         )
 
         # Показываем меню
