@@ -2247,18 +2247,6 @@ class ProductionApp:
         )
         self.order_details_filter_status.pack(pady=5)
 
-        # Кнопки управления деталями
-        details_buttons_frame = tk.Frame(self.orders_frame, bg='white')
-        details_buttons_frame.pack(fill=tk.X, padx=10, pady=5)
-        tk.Button(details_buttons_frame, text="Добавить деталь", bg='#27ae60', fg='white',
-                  command=self.add_order_detail, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(details_buttons_frame, text="Редактировать деталь", bg='#f39c12', fg='white',
-                  command=self.edit_order_detail, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(details_buttons_frame, text="Удалить деталь", bg='#e74c3c', fg='white',
-                  command=self.delete_order_detail, **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(details_buttons_frame, text="✖ Сбросить фильтры", bg='#e67e22', fg='white',
-                  command=self.clear_order_details_filters, **btn_style).pack(side=tk.LEFT, padx=5)
-
         self.refresh_orders()
 
     def clear_orders_filters(self):
@@ -3670,18 +3658,10 @@ class ProductionApp:
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
         btn_style = {"font": ("Arial", 10), "width": 18, "height": 2}
 
-        tk.Button(buttons_frame, text="Зарезервировать", bg='#27ae60', fg='white', command=self.add_reservation,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Удалить резерв", bg='#e74c3c', fg='white', command=self.delete_reservation,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Редактировать", bg='#f39c12', fg='white', command=self.edit_reservation,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white', command=self.refresh_reservations,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Задание на лазер", bg='#e67e22', fg='white', command=self.export_laser_task,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
         tk.Button(buttons_frame, text="✖ Сбросить фильтры", bg='#e67e22', fg='white',
                   command=self.clear_reservations_filters, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        self.reservations_tree.bind('<Button-3>', self.on_reservations_right_click)
 
         self.refresh_reservations()
 
@@ -3689,6 +3669,96 @@ class ProductionApp:
         """Сбросить все фильтры резервирования"""
         if hasattr(self, 'reservations_excel_filter'):
             self.reservations_excel_filter.clear_all_filters()
+
+    def on_reservations_right_click(self, event):
+        """Обработчик правого клика на таблице резервирования"""
+        # Определяем регион клика
+        region = self.reservations_tree.identify_region(event.x, event.y)
+
+        # Если клик на заголовке - выходим (чтобы работал фильтр)
+        if region == "heading":
+            return
+
+        # Определяем строку под курсором
+        item = self.reservations_tree.identify_row(event.y)
+
+        # Если клик на строке и она не выделена - выделяем
+        if item and item not in self.reservations_tree.selection():
+            self.reservations_tree.selection_set(item)
+
+        # Показываем универсальное меню
+        self.show_reservations_context_menu(event)
+
+    def show_reservations_context_menu(self, event):
+        """Универсальное контекстное меню для таблицы резервирования"""
+        selected_count = len(self.reservations_tree.selection())
+
+        # Создаём меню
+        context_menu = tk.Menu(self.root, tearoff=0, font=("Arial", 10))
+
+        # ========== ОПЕРАЦИИ С ВЫБРАННЫМИ СТРОКАМИ ==========
+        if selected_count > 0:
+            context_menu.add_command(
+                label=f"📊 Выбрано: {selected_count} шт",
+                state='disabled',
+                foreground='#0c5460'
+            )
+            context_menu.add_separator()
+
+            # Редактирование (только для одной строки)
+            if selected_count == 1:
+                context_menu.add_command(
+                    label="✏️  Редактировать резерв",
+                    command=self.edit_reservation,
+                )
+            else:
+                context_menu.add_command(
+                    label=f"✏️  Редактировать (только для 1 резерва)",
+                    command=lambda: messagebox.showwarning(
+                        "Множественное редактирование",
+                        "Редактирование доступно только для одного резерва!\n\n"
+                        f"Выбрано строк: {selected_count}\n"
+                        "Снимите выделение с лишних строк (клик на пустом месте)."
+                    ),
+                    state='disabled'
+                )
+
+            # Удаление
+            delete_label = f"🗑️  Удалить резерв ({selected_count} шт)"
+            context_menu.add_command(
+                label=delete_label,
+                command=self.delete_reservation
+            )
+
+            context_menu.add_separator()
+
+        # ========== ОПЕРАЦИИ ДОБАВЛЕНИЯ (ВСЕГДА ДОСТУПНЫ) ==========
+        context_menu.add_command(
+            label="➕  Зарезервировать материал",
+            command=self.add_reservation,
+        )
+
+        context_menu.add_separator()
+
+        # ========== ЭКСПОРТ (ВСЕГДА ДОСТУПЕН) ==========
+        context_menu.add_command(
+            label="📄  Задание на лазер",
+            command=self.export_laser_task
+        )
+
+        context_menu.add_separator()
+
+        # ========== ДОПОЛНИТЕЛЬНЫЕ ОПЦИИ ==========
+        context_menu.add_command(
+            label="🔄  Обновить таблицу",
+            command=self.refresh_reservations
+        )
+
+        # Показываем меню
+        try:
+            context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            context_menu.grab_release()
 
     def clear_writeoffs_filters(self):
         """Сбросить все фильтры списаний"""
