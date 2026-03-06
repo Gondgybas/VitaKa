@@ -2033,91 +2033,94 @@ class ProductionApp:
 
     # 🆕 МЕТОДЫ КОНТЕКСТНОГО МЕНЮ ДЛЯ МАТЕРИАЛОВ
 
+    # 🆕 УНИВЕРСАЛЬНОЕ КОНТЕКСТНОЕ МЕНЮ ДЛЯ МАТЕРИАЛОВ
+
     def on_materials_right_click(self, event):
         """Обработчик правого клика на таблице материалов"""
         # Определяем регион клика
         region = self.materials_tree.identify_region(event.x, event.y)
-        item = self.materials_tree.identify_row(event.y)
 
-        # Если клик в области ячейки или строки
-        if region == "cell" or (region == "tree" and item):
-            # Клик на строке - показываем меню для строк
-            self.show_materials_context_menu_row(event)
-        else:
-            # Клик на пустом месте, заголовке или за пределами - показываем меню для пустого места
-            # Снимаем выделение для визуальной ясности
-            self.materials_tree.selection_remove(self.materials_tree.selection())
-            self.show_materials_context_menu_empty(event)
-
-    def show_materials_context_menu_empty(self, event):
-        """Контекстное меню при клике на пустое место таблицы материалов"""
-        # Дополнительная проверка: если есть выделенные строки - снимаем выделение
-        if self.materials_tree.selection():
-            self.materials_tree.selection_remove(self.materials_tree.selection())
-
-        # Создаём меню
-        context_menu = tk.Menu(self.root, tearoff=0)
-        context_menu.add_command(
-            label="➕ Добавить материал",
-            command=self.add_material
-        )
-        context_menu.add_separator()
-        context_menu.add_command(
-            label="📥 Импорт из Excel",
-            command=self.import_materials
-        )
-        context_menu.add_command(
-            label="📄 Скачать шаблон Excel",
-            command=self.download_template
-        )
-
-        # Показываем меню
-        try:
-            context_menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            context_menu.grab_release()
-
-    def show_materials_context_menu_row(self, event):
-        """Контекстное меню при клике на строку таблицы материалов"""
-        # Определяем строку под курсором
-        item = self.materials_tree.identify_row(event.y)
-        if not item:
+        # Если клик на заголовке - выходим (чтобы работал фильтр)
+        if region == "heading":
             return
 
-        # Если строка не выделена - выделяем её
-        if item not in self.materials_tree.selection():
+        # Определяем строку под курсором
+        item = self.materials_tree.identify_row(event.y)
+
+        # Если клик на строке и она не выделена - выделяем
+        if item and item not in self.materials_tree.selection():
             self.materials_tree.selection_set(item)
 
+        # Показываем универсальное меню
+        self.show_materials_context_menu(event)
+
+    def show_materials_context_menu(self, event):
+        """Универсальное контекстное меню для таблицы материалов"""
         selected_count = len(self.materials_tree.selection())
 
         # Создаём меню
-        context_menu = tk.Menu(self.root, tearoff=0)
+        context_menu = tk.Menu(self.root, tearoff=0, font=("Arial", 10))
 
-        # Редактирование (только для одной строки)
-        if selected_count == 1:
+        # ========== ОПЕРАЦИИ С ВЫБРАННЫМИ СТРОКАМИ ==========
+        if selected_count > 0:
             context_menu.add_command(
-                label="✏️ Редактировать",
-                command=self.edit_material
+                label=f"📊 Выбрано: {selected_count} шт",
+                state='disabled',
+                foreground='#0c5460'
             )
-        else:
+            context_menu.add_separator()
+
+            # Редактирование (только для одной строки)
+            if selected_count == 1:
+                context_menu.add_command(
+                    label="✏️  Редактировать",
+                    command=self.edit_material,
+                )
+            else:
+                context_menu.add_command(
+                    label=f"✏️  Редактировать (только для 1 строки)",
+                    command=lambda: messagebox.showwarning(
+                        "Множественное редактирование",
+                        "Редактирование доступно только для одной строки!\n\n"
+                        f"Выбрано строк: {selected_count}\n"
+                        "Снимите выделение с лишних строк (клик на пустом месте)."
+                    ),
+                    state='disabled'
+                )
+
+            # Удаление
+            delete_label = f"🗑️  Удалить ({selected_count} шт)"
             context_menu.add_command(
-                label=f"✏️ Редактировать (выбрано: {selected_count})",
-                command=lambda: messagebox.showwarning(
-                    "Множественное редактирование",
-                    "Редактирование доступно только для одной строки!\n\n"
-                    f"Выбрано строк: {selected_count}\n"
-                    "Снимите выделение с лишних строк."
-                ),
-                state='disabled'
+                label=delete_label,
+                command=self.delete_material
             )
+
+            context_menu.add_separator()
+
+        # ========== ОПЕРАЦИИ ДОБАВЛЕНИЯ (ВСЕГДА ДОСТУПНЫ) ==========
+        context_menu.add_command(
+            label="➕  Добавить материал",
+            command=self.add_material,
+        )
 
         context_menu.add_separator()
 
-        # Удаление (доступно для любого количества)
-        delete_label = f"🗑️ Удалить ({selected_count} шт)" if selected_count > 1 else "🗑️ Удалить"
+        # ========== ОПЕРАЦИИ С EXCEL (ВСЕГДА ДОСТУПНЫ) ==========
         context_menu.add_command(
-            label=delete_label,
-            command=self.delete_material
+            label="📥  Импорт из Excel",
+            command=self.import_materials
+        )
+        context_menu.add_command(
+            label="📄  Скачать шаблон Excel",
+            command=self.download_template
+        )
+
+        context_menu.add_separator()
+
+        # ========== ДОПОЛНИТЕЛЬНЫЕ ОПЦИИ ==========
+        context_menu.add_command(
+            label="🔄  Обновить таблицу",
+            command=self.refresh_materials
         )
 
         # Показываем меню
