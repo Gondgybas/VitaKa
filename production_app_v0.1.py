@@ -68,6 +68,13 @@ def load_data(sheet_name):
     try:
         if os.path.exists(file_path):
             df = pd.read_excel(file_path, sheet_name=sheet_name)
+
+            # 🆕 КОНВЕРТИРУЕМ ТЕКСТОВЫЕ КОЛОНКИ (NaN → пустая строка)
+            text_columns = ["Примечания", "Комментарий", "Описание", "Заметки"]
+            for col in text_columns:
+                if col in df.columns:
+                    df[col] = df[col].fillna('').astype(str)
+
             return df
         else:
             print(f"⚠️ Файл базы данных не найден: {file_path}")
@@ -3138,54 +3145,117 @@ class ProductionApp:
                   command=save_order).pack(pady=20)
 
     def edit_order(self):
+        """Редактирование заказа"""
         selected = self.orders_tree.selection()
         if not selected:
             messagebox.showwarning("Предупреждение", "Выберите заказ для редактирования")
             return
+
         item_id = self.orders_tree.item(selected)["values"][0]
         df = load_data("Orders")
         row = df[df["ID заказа"] == item_id].iloc[0]
+
+        # Создаём окно
         edit_window = tk.Toplevel(self.root)
         edit_window.title("Редактировать заказ")
-        edit_window.geometry("450x450")
+        edit_window.geometry("450x500")
         edit_window.configure(bg='#ecf0f1')
-        tk.Label(edit_window, text=f"Редактирование заказа #{item_id}", font=("Arial", 12, "bold"), bg='#ecf0f1').pack(
-            pady=10)
-        fields = [("Название заказа:", "Название заказа"), ("Заказчик:", "Заказчик"), ("Примечания:", "Примечания")]
+
+        tk.Label(edit_window, text=f"Редактирование заказа #{item_id}",
+                 font=("Arial", 12, "bold"), bg='#ecf0f1').pack(pady=10)
+
+        # Поля ввода
+        fields = [
+            ("Название заказа:", "Название заказа"),
+            ("Заказчик:", "Заказчик"),
+            ("Примечания:", "Примечания")
+        ]
+
         entries = {}
+
         for label_text, key in fields:
             frame = tk.Frame(edit_window, bg='#ecf0f1')
             frame.pack(fill=tk.X, padx=20, pady=5)
-            tk.Label(frame, text=label_text, width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
+            tk.Label(frame, text=label_text, width=20, anchor='w',
+                     bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
             entry = tk.Entry(frame, font=("Arial", 10))
-            entry.insert(0, str(row[key]))
+
+            # 🆕 БЕЗОПАСНОЕ ПОЛУЧЕНИЕ ЗНАЧЕНИЯ (NaN → пустая строка)
+            value = row[key]
+            if pd.isna(value):
+                value = ""
+            else:
+                value = str(value)
+
+            entry.insert(0, value)
             entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
             entries[key] = entry
+
+        # Статус
         status_frame = tk.Frame(edit_window, bg='#ecf0f1')
         status_frame.pack(fill=tk.X, padx=20, pady=5)
-        tk.Label(status_frame, text="Статус:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
-            side=tk.LEFT)
+        tk.Label(status_frame, text="Статус:", width=20, anchor='w',
+                 bg='#ecf0f1', font=("Arial", 10)).pack(side=tk.LEFT)
         status_var = tk.StringVar(value=row["Статус"])
         status_combo = ttk.Combobox(status_frame, textvariable=status_var,
                                     values=["Новый", "В работе", "Завершен", "Отменен"],
                                     font=("Arial", 10), state="readonly")
         status_combo.pack(side=tk.RIGHT, expand=True, fill=tk.X)
 
+        # Функция сохранения
         def save_changes():
             try:
-                df.loc[df["ID заказа"] == item_id, "Название заказа"] = entries["Название заказа"].get()
-                df.loc[df["ID заказа"] == item_id, "Заказчик"] = entries["Заказчик"].get()
-                df.loc[df["ID заказа"] == item_id, "Статус"] = status_var.get()
-                df.loc[df["ID заказа"] == item_id, "Примечания"] = entries["Примечания"].get()
+                # Получаем значения из полей
+                new_order_name = entries["Название заказа"].get().strip()
+                new_customer = entries["Заказчик"].get().strip()
+                new_notes = entries["Примечания"].get().strip()
+                new_status = status_var.get()
+
+                # Валидация
+                if not new_order_name:
+                    messagebox.showerror("Ошибка", "Название заказа не может быть пустым!")
+                    return
+
+                if not new_customer:
+                    messagebox.showerror("Ошибка", "Заказчик не может быть пустым!")
+                    return
+
+                # 🆕 ПЕРЕЗАГРУЖАЕМ ДАННЫЕ (ВАЖНО!)
+                df = load_data("Orders")
+
+                # 🆕 КОНВЕРТИРУЕМ КОЛОНКУ "Примечания" В СТРОКОВЫЙ ТИП
+                if "Примечания" in df.columns:
+                    df["Примечания"] = df["Примечания"].fillna('').astype(str)
+
+                # 🆕 ИСПОЛЬЗУЕМ .at ДЛЯ БЕЗОПАСНОГО ОБНОВЛЕНИЯ
+                row_index = df[df["ID заказа"] == item_id].index[0]
+
+                df.at[row_index, "Название заказа"] = str(new_order_name)
+                df.at[row_index, "Заказчик"] = str(new_customer)
+                df.at[row_index, "Примечания"] = str(new_notes)
+                df.at[row_index, "Статус"] = str(new_status)
+
                 save_data("Orders", df)
                 self.refresh_orders()
                 edit_window.destroy()
-                messagebox.showinfo("Успех", "Заказ успешно обновлен!")
+                messagebox.showinfo("Успех", "Заказ обновлён!")
+
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось обновить заказ: {e}")
+                import traceback
+                traceback.print_exc()
 
-        tk.Button(edit_window, text="Сохранить", bg='#3498db', fg='white', font=("Arial", 12, "bold"),
-                  command=save_changes).pack(pady=20)
+        # Кнопки
+        buttons_frame = tk.Frame(edit_window, bg='#ecf0f1')
+        buttons_frame.pack(pady=20)
+
+        tk.Button(buttons_frame, text="Сохранить", bg='#27ae60', fg='white',
+                  font=("Arial", 10, "bold"), width=15, height=2,
+                  command=save_changes).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(buttons_frame, text="Отмена", bg='#e74c3c', fg='white',
+                  font=("Arial", 10, "bold"), width=15, height=2,
+                  command=edit_window.destroy).pack(side=tk.LEFT, padx=5)
 
     def delete_order(self):
         selected = self.orders_tree.selection()
