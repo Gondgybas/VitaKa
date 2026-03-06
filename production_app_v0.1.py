@@ -46,34 +46,59 @@ def initialize_database():
         print(f"База данных '{DATABASE_FILE}' создана!")
 
 
-def load_data(sheet_name):
+def get_database_path():
+    """Получить путь к папке с базой данных из настроек"""
+    settings_file = "app_settings.json"
     try:
-        df = pd.read_excel(DATABASE_FILE, sheet_name=sheet_name, engine='openpyxl')
-        if df.empty:
+        if os.path.exists(settings_file):
+            with open(settings_file, 'r', encoding='utf-8') as f:
+                settings = json.load(f)
+                return settings.get("database_path", os.path.dirname(os.path.abspath(__file__)))
+    except:
+        pass
+    # По умолчанию - текущая папка
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def load_data(sheet_name):
+    """Загрузка данных из Excel с учётом пути из настроек"""
+    db_path = get_database_path()
+    file_path = os.path.join(db_path, "production_database.xlsx")
+
+    try:
+        if os.path.exists(file_path):
+            df = pd.read_excel(file_path, sheet_name=sheet_name)
             return df
-        df = df.fillna("")
-        return df
+        else:
+            print(f"⚠️ Файл базы данных не найден: {file_path}")
+            return pd.DataFrame()
     except Exception as e:
-        print(f"Ошибка загрузки данных из {sheet_name}: {e}")
+        print(f"❌ Ошибка загрузки данных из {sheet_name}: {e}")
         return pd.DataFrame()
 
 
-def save_data(sheet_name, dataframe):
+def save_data(sheet_name, df):
+    """Сохранение данных в Excel с учётом пути из настроек"""
+    db_path = get_database_path()
+    file_path = os.path.join(db_path, "production_database.xlsx")
+
     try:
-        book = load_workbook(DATABASE_FILE)
-        if sheet_name in book.sheetnames:
-            del book[sheet_name]
-        sheet = book.create_sheet(sheet_name)
-        for col_num, column_title in enumerate(dataframe.columns, 1):
-            sheet.cell(row=1, column=col_num).value = str(column_title)
-        for row_num, row_data in enumerate(dataframe.values, 2):
-            for col_num, cell_value in enumerate(row_data, 1):
-                sheet.cell(row=row_num, column=col_num).value = cell_value
-        book.save(DATABASE_FILE)
-        book.close()
+        if os.path.exists(file_path):
+            with pd.ExcelFile(file_path, engine='openpyxl') as xls:
+                sheets = {s: pd.read_excel(xls, s) for s in xls.sheet_names}
+        else:
+            sheets = {}
+
+        sheets[sheet_name] = df
+
+        with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+            for s, data in sheets.items():
+                data.to_excel(writer, sheet_name=s, index=False)
+
+        print(f"✅ Данные сохранены в {sheet_name}")
     except Exception as e:
-        print(f"Ошибка сохранения данных в {sheet_name}: {e}")
-        messagebox.showerror("Ошибка", f"Невозможно сохранить данные: {e}")
+        print(f"❌ Ошибка сохранения данных в {sheet_name}: {e}")
+        messagebox.showerror("Ошибка сохранения", f"Не удалось сохранить данные: {e}")
 
 
 class ExcelStyleFilter:
@@ -542,9 +567,41 @@ class ExcelStyleFilter:
 class ProductionApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Система учета производства")
+        self.root.title("ООО Вита-Ка")
         self.root.geometry("1400x800")
         self.root.configure(bg='#f0f0f0')
+
+        # Создаём верхнюю панель с заголовком и кнопкой настроек
+        header_frame = tk.Frame(root, bg='#2c3e50', height=50)
+        header_frame.pack(fill=tk.X, side=tk.TOP)
+        header_frame.pack_propagate(False)
+
+        # Заголовок приложения
+        title_label = tk.Label(
+            header_frame,
+            text="⚙️ Система учета производства",
+            font=("Arial", 16, "bold"),
+            bg='#2c3e50',
+            fg='white'
+        )
+        title_label.pack(side=tk.LEFT, padx=20, pady=10)
+
+        # Кнопка настроек (шестерёнка)
+        settings_button = tk.Button(
+            header_frame,
+            text="⚙️ Настройки",
+            font=("Arial", 11, "bold"),
+            bg='#34495e',
+            fg='white',
+            activebackground='#1abc9c',
+            activeforeground='white',
+            relief=tk.FLAT,
+            padx=15,
+            pady=5,
+            cursor='hand2',
+            command=self.open_settings
+        )
+        settings_button.pack(side=tk.RIGHT, padx=20, pady=10)
 
         # Инициализация переменных toggles
         self.materials_toggles = {}
@@ -598,6 +655,164 @@ class ProductionApp:
         self.material_logs_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.material_logs_frame, text="📊 История материалов")
         self.setup_material_logs_tab()
+
+    def load_settings(self):
+        """Загрузка настроек из файла"""
+        settings_file = "app_settings.json"
+        default_settings = {
+            "database_path": os.path.dirname(os.path.abspath(__file__))  # Текущая папка по умолчанию
+        }
+
+        try:
+            if os.path.exists(settings_file):
+                with open(settings_file, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+                    print(f"✅ Настройки загружены: {settings}")
+                    return settings
+            else:
+                print(f"⚠️ Файл настроек не найден, используются значения по умолчанию")
+                return default_settings
+        except Exception as e:
+            print(f"❌ Ошибка загрузки настроек: {e}")
+            return default_settings
+
+    def save_settings(self, settings):
+        """Сохранение настроек в файл"""
+        settings_file = "app_settings.json"
+        try:
+            with open(settings_file, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, ensure_ascii=False, indent=4)
+            print(f"✅ Настройки сохранены: {settings}")
+            return True
+        except Exception as e:
+            print(f"❌ Ошибка сохранения настроек: {e}")
+            messagebox.showerror("Ошибка", f"Не удалось сохранить настройки: {e}")
+            return False
+
+    def open_settings(self):
+        """Открытие окна настроек"""
+        settings_window = tk.Toplevel(self.root)
+        settings_window.title("⚙️ Настройки программы")
+        settings_window.geometry("700x300")
+        settings_window.configure(bg='#ecf0f1')
+        settings_window.resizable(False, False)
+
+        # Заголовок
+        header = tk.Label(
+            settings_window,
+            text="⚙️ Настройки системы",
+            font=("Arial", 16, "bold"),
+            bg='#ecf0f1',
+            fg='#2c3e50'
+        )
+        header.pack(pady=20)
+
+        # Загружаем текущие настройки
+        current_settings = self.load_settings()
+
+        # Путь к папке с БД
+        path_frame = tk.LabelFrame(
+            settings_window,
+            text="📁 Путь к системной папке с данными",
+            bg='#ecf0f1',
+            font=("Arial", 11, "bold"),
+            fg='#34495e'
+        )
+        path_frame.pack(fill=tk.X, padx=30, pady=15)
+
+        path_info = tk.Label(
+            path_frame,
+            text="В этой папке должны находиться файлы:\n• production_database.xlsx\n• laser_import_cache.xlsx",
+            bg='#ecf0f1',
+            font=("Arial", 9),
+            fg='#7f8c8d',
+            justify=tk.LEFT
+        )
+        path_info.pack(anchor='w', padx=10, pady=5)
+
+        path_entry_frame = tk.Frame(path_frame, bg='#ecf0f1')
+        path_entry_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        path_var = tk.StringVar(value=current_settings.get("database_path", ""))
+        path_entry = tk.Entry(
+            path_entry_frame,
+            textvariable=path_var,
+            font=("Arial", 10),
+            width=50
+        )
+        path_entry.pack(side=tk.LEFT, padx=5)
+
+        def browse_folder():
+            folder = filedialog.askdirectory(
+                title="Выберите папку с файлами базы данных",
+                initialdir=path_var.get()
+            )
+            if folder:
+                path_var.set(folder)
+
+        browse_button = tk.Button(
+            path_entry_frame,
+            text="📂 Обзор...",
+            font=("Arial", 10),
+            bg='#3498db',
+            fg='white',
+            command=browse_folder,
+            cursor='hand2'
+        )
+        browse_button.pack(side=tk.LEFT, padx=5)
+
+        # Кнопки Сохранить/Отмена
+        buttons_frame = tk.Frame(settings_window, bg='#ecf0f1')
+        buttons_frame.pack(pady=20)
+
+        def save_and_close():
+            new_path = path_var.get().strip()
+
+            # Проверяем что папка существует
+            if not os.path.exists(new_path):
+                messagebox.showerror(
+                    "Ошибка",
+                    f"Папка не существует:\n{new_path}"
+                )
+                return
+
+            # Сохраняем настройки
+            new_settings = {
+                "database_path": new_path
+            }
+
+            if self.save_settings(new_settings):
+                messagebox.showinfo(
+                    "Успех",
+                    "Настройки сохранены!\n\nПерезапустите программу для применения изменений."
+                )
+                settings_window.destroy()
+
+        save_button = tk.Button(
+            buttons_frame,
+            text="💾 Сохранить",
+            font=("Arial", 11, "bold"),
+            bg='#27ae60',
+            fg='white',
+            width=15,
+            height=2,
+            command=save_and_close,
+            cursor='hand2'
+        )
+        save_button.pack(side=tk.LEFT, padx=10)
+
+        cancel_button = tk.Button(
+            buttons_frame,
+            text="❌ Отмена",
+            font=("Arial", 11, "bold"),
+            bg='#95a5a6',
+            fg='white',
+            width=15,
+            height=2,
+            command=settings_window.destroy,
+            cursor='hand2'
+        )
+        cancel_button.pack(side=tk.LEFT, padx=10)
 
     def create_filter_panel(self, parent_frame, tree_widget, columns_to_filter, refresh_callback):
         """Создание панели фильтрации для любой таблицы"""
@@ -2302,7 +2517,7 @@ class ProductionApp:
             parts = [
                 f"{customer} | {order_name}",
                 f"{detail_name}",
-                f"Оста��ось: {remaining_to_cut} шт"
+                f"Осталось: {remaining_to_cut} шт"
             ]
 
             # Добавляем материал (если есть)
