@@ -511,19 +511,22 @@ class ExcelStyleFilter:
             self.tree.heading(col, text=new_text)
 
     def reapply_all_filters(self):
-        """Переприменить все активные фильтры"""
+        """Переприменить все активные фильтры с сохранением порядка"""
         if not self.active_filters:
             return
 
-        # Показываем все
-        for item_id in self._all_item_cache:
-            try:
-                self.tree.reattach(item_id, '', 'end')
-            except:
-                pass
+        # 🆕 СОХРАНЯЕМ ИСХОДНЫЙ ПОРЯДОК ЭЛЕМЕНТОВ
+        all_items_ordered = []
+        for item_id in self.tree.get_children(''):
+            all_items_ordered.append(item_id)
 
-        # Применяем каждый фильтр
-        visible_items = set(self.tree.get_children(''))
+        # Добавляем скрытые элементы из кеша
+        for item_id in self._all_item_cache:
+            if item_id not in all_items_ordered:
+                all_items_ordered.append(item_id)
+
+        # Определяем какие элементы должны быть видимы
+        visible_items = set(all_items_ordered)
 
         for column_id, selected_values in self.active_filters.items():
             column_index = list(self.tree["columns"]).index(column_id)
@@ -540,10 +543,19 @@ class ExcelStyleFilter:
                 except:
                     pass
 
-            for item_id in items_to_hide:
-                self.tree.detach(item_id)
-
             visible_items -= items_to_hide
+
+        # 🆕 ПРЯЧЕМ/ПОКАЗЫВАЕМ С СОХРАНЕНИЕМ ИСХОДНОГО ПОРЯДКА
+        for idx, item_id in enumerate(all_items_ordered):
+            try:
+                if item_id in visible_items:
+                    # Показываем элемент на его исходной позиции
+                    self.tree.reattach(item_id, '', idx)
+                else:
+                    # Прячем элемент
+                    self.tree.detach(item_id)
+            except:
+                pass
 
         self.update_column_headers()
 
@@ -6021,6 +6033,9 @@ class ProductionApp:
             # Преобразуем обратно в список словарей
             sorted_data = df_display.to_dict('records')
 
+            # 🆕 СОХРАНЯЕМ ОТСОРТИРОВАННЫЕ ДАННЫЕ ОБРАТНО
+            self.laser_table_data = sorted_data
+
             # Показываем первую и последнюю запись
             if sorted_data:
                 first = f"{sorted_data[0].get('Дата (МСК)', '')} {sorted_data[0].get('Время (МСК)', '')}"
@@ -6084,7 +6099,8 @@ class ProductionApp:
                 tag = 'pending'
                 pending_count += 1
 
-            item_id = self.laser_import_tree.insert("", "end", values=values, tags=(tag,))
+                # 🆕 ВСТАВЛЯЕМ С ЯВНЫМ ИНДЕКСОМ ДЛЯ СОХРАНЕНИЯ ПОРЯДКА
+                item_id = self.laser_import_tree.insert("", idx, values=values, tags=(tag,))
 
             # СОХРАНЯЕМ item_id В КЭШ
             if hasattr(self, 'laser_import_excel_filter'):
@@ -6099,6 +6115,31 @@ class ProductionApp:
         if active_filters_backup and hasattr(self, 'laser_import_excel_filter'):
             self.laser_import_excel_filter.active_filters = active_filters_backup
             self.laser_import_excel_filter.reapply_all_filters()
+
+            # 🆕 ПРИНУДИТЕЛЬНАЯ ПЕРЕСОРТИРОВКА ПОСЛЕ ФИЛЬТРАЦИИ
+            visible_items = list(self.laser_import_tree.get_children(''))
+
+            # Собираем данные видимых элементов с их датами
+            items_with_dates = []
+            for item_id in visible_items:
+                values = self.laser_import_tree.item(item_id)['values']
+                date_str = str(values[0])  # Дата (МСК)
+                time_str = str(values[1])  # Время (МСК)
+                datetime_str = f"{date_str} {time_str}"
+                items_with_dates.append((item_id, datetime_str))
+
+            # Сортируем по дате (новые сверху)
+            try:
+                items_with_dates.sort(
+                    key=lambda x: pd.to_datetime(x[1], format='%d.%m.%Y %H:%M:%S', errors='coerce'),
+                    reverse=True
+                )
+
+                # Переставляем элементы в правильном порядке
+                for idx, (item_id, _) in enumerate(items_with_dates):
+                    self.laser_import_tree.move(item_id, '', idx)
+            except:
+                pass
 
         print(f"📊 Отображено: 🔵 Синих={manual_count}, 🟢 Зелёных={auto_count}, 🟡 Жёлтых={pending_count}")
 
