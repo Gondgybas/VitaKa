@@ -2156,6 +2156,9 @@ class ProductionApp:
             self.orders_tree.column(col, anchor=tk.CENTER, width=100, minwidth=80, stretch=False)
 
         self.orders_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # ПРИВЯЗКА КОНТЕКСТНОГО МЕНЮ
+        self.orders_tree.bind('<Button-3>', self.on_orders_right_click)
         self.orders_tree.bind('<<TreeviewSelect>>', self.on_order_select)
 
         # ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ ЗАКАЗОВ
@@ -2185,20 +2188,10 @@ class ProductionApp:
             self.refresh_orders
         )
 
-        # Кнопки управления заказами
         buttons_frame = tk.Frame(self.orders_frame, bg='white')
-        buttons_frame.pack(fill=tk.X, padx=10, pady=5)
-        btn_style = {"font": ("Arial", 10), "width": 15, "height": 2}
-        tk.Button(buttons_frame, text="Добавить заказ", bg='#27ae60', fg='white', command=self.add_order,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Импорт из Excel", bg='#9b59b6', fg='white', command=self.import_orders,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Скачать шаблон", bg='#3498db', fg='white', command=self.download_orders_template,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Редактировать", bg='#f39c12', fg='white', command=self.edit_order,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
-        tk.Button(buttons_frame, text="Удалить заказ", bg='#e74c3c', fg='white', command=self.delete_order,
-                  **btn_style).pack(side=tk.LEFT, padx=5)
+        buttons_frame.pack(fill=tk.X, padx=10, pady=10)
+        btn_style = {"font": ("Arial", 10), "width": 20, "height": 2}
+
         tk.Button(buttons_frame, text="✖ Сбросить фильтры", bg='#e67e22', fg='white',
                   command=self.clear_orders_filters, **btn_style).pack(side=tk.LEFT, padx=5)
 
@@ -3214,6 +3207,78 @@ class ProductionApp:
             self.refresh_orders()
             self.refresh_order_details()
             messagebox.showinfo("Успех", f"Удалено заказов: {count}")
+
+        # ===================================================================
+        # КОНТЕКСТНОЕ МЕНЮ ДЛЯ ЗАКАЗОВ
+        # ===================================================================
+
+    def on_orders_right_click(self, event):
+        """Обработчик правого клика на таблице заказов"""
+        region = self.orders_tree.identify_region(event.x, event.y)
+        if region == "heading":
+            return
+
+        item = self.orders_tree.identify_row(event.y)
+        if item and item not in self.orders_tree.selection():
+            self.orders_tree.selection_set(item)
+
+        self.show_orders_context_menu(event)
+
+    def show_orders_context_menu(self, event):
+        """Универсальное контекстное меню для заказов"""
+        selected_count = len(self.orders_tree.selection())
+
+        context_menu = tk.Menu(self.root, tearoff=0, font=("Arial", 10))
+
+        if selected_count > 0:
+            context_menu.add_command(
+                label=f"📊 Выбрано: {selected_count} шт",
+                state='disabled',
+                foreground='#0c5460'
+            )
+            context_menu.add_separator()
+
+            if selected_count == 1:
+                context_menu.add_command(
+                    label="✏️  Редактировать заказ",
+                    command=self.edit_order
+                )
+            else:
+                context_menu.add_command(
+                    label=f"✏️  Редактировать (только для 1 заказа)",
+                    state='disabled'
+                )
+
+            context_menu.add_command(
+                label=f"🗑️  Удалить ({selected_count} шт)",
+                command=self.delete_order
+            )
+
+            context_menu.add_separator()
+
+        context_menu.add_command(
+            label="➕  Добавить заказ",
+            command=self.add_order
+        )
+
+        context_menu.add_separator()
+
+        context_menu.add_command(
+            label="📥  Импорт из Excel",
+            command=self.import_orders
+        )
+
+        context_menu.add_separator()
+
+        context_menu.add_command(
+            label="🔄  Обновить таблицу",
+            command=self.refresh_orders
+        )
+
+        try:
+            context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            context_menu.grab_release()
 
     def add_order_detail(self):
         selected = self.orders_tree.selection()
