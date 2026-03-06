@@ -2035,22 +2035,25 @@ class ProductionApp:
 
     def on_materials_right_click(self, event):
         """Обработчик правого клика на таблице материалов"""
-        # Проверяем где клик: на строке или на пустом месте
+        # Определяем регион клика
+        region = self.materials_tree.identify_region(event.x, event.y)
         item = self.materials_tree.identify_row(event.y)
 
-        if item:
+        # Если клик в области ячейки или строки
+        if region == "cell" or (region == "tree" and item):
             # Клик на строке - показываем меню для строк
             self.show_materials_context_menu_row(event)
         else:
-            # Клик на пустом месте - показываем меню для пустого места
+            # Клик на пустом месте, заголовке или за пределами - показываем меню для пустого места
+            # Снимаем выделение для визуальной ясности
+            self.materials_tree.selection_remove(self.materials_tree.selection())
             self.show_materials_context_menu_empty(event)
 
     def show_materials_context_menu_empty(self, event):
         """Контекстное меню при клике на пустое место таблицы материалов"""
-        # Проверяем что клик был НЕ на строке
-        item = self.materials_tree.identify_row(event.y)
-        if item:
-            return  # Если клик на строке - выходим
+        # Дополнительная проверка: если есть выделенные строки - снимаем выделение
+        if self.materials_tree.selection():
+            self.materials_tree.selection_remove(self.materials_tree.selection())
 
         # Создаём меню
         context_menu = tk.Menu(self.root, tearoff=0)
