@@ -559,6 +559,14 @@ class ExcelStyleFilter:
 
         self.update_column_headers()
 
+        # 🆕 ВЫЗЫВАЕМ СПЕЦИАЛЬНУЮ СОРТИРОВКУ ДЛЯ ИМПОРТА ОТ ЛАЗЕРЩИКОВ
+        if self.refresh_callback and hasattr(self.refresh_callback, '__self__'):
+            app_instance = self.refresh_callback.__self__
+            if hasattr(app_instance, 'sort_laser_import_by_original_order'):
+                # Проверяем что это именно таблица импорта
+                if hasattr(app_instance, 'laser_import_tree') and self.tree == app_instance.laser_import_tree:
+                    app_instance.sort_laser_import_by_original_order()
+
     def clear_all_filters(self):
         """очистить все фильтры"""
         self.active_filters = {}
@@ -5999,9 +6007,20 @@ class ProductionApp:
 
     def refresh_laser_import_table(self):
         """Обновление таблицы импорта от лазерщиков"""
+
+        # 🆕 СОХРАНЯЕМ АКТИВНЫЕ ФИЛЬТРЫ ПЕРЕД ОЧИСТКОЙ
+        active_filters_backup = {}
+        if hasattr(self, 'laser_import_excel_filter') and self.laser_import_excel_filter.active_filters:
+            active_filters_backup = self.laser_import_excel_filter.active_filters.copy()
+            print(f"🔍 Сохранены фильтры импорта: {list(active_filters_backup.keys())}")
+
         # Очищаем таблицу
         for item in self.laser_import_tree.get_children():
             self.laser_import_tree.delete(item)
+
+        # Очищаем кеш
+        if hasattr(self, 'laser_import_excel_filter'):
+            self.laser_import_excel_filter._all_item_cache = set()
 
         if not hasattr(self, 'laser_table_data') or self.laser_table_data is None:
             self.laser_table_data = []
@@ -6010,17 +6029,17 @@ class ProductionApp:
         if not self.laser_table_data:
             return
 
-        # 🔥 СОРТИРОВКА С ПРАВИЛЬНЫМ ФОРМАТОМ ДАТЫ
+        # СОРТИРОВКА С ПРАВИЛЬНЫМ ФОРМАТОМ ДАТЫ
         try:
             print(f"🔄 Сортировка {len(self.laser_table_data)} записей перед отображением...")
 
             # Преобразуем в DataFrame
             df_display = pd.DataFrame(self.laser_table_data)
 
-            # 🆕 ПРАВИЛЬНЫЙ ПАРСИНГ ДАТЫ: ФОРМАТ DD.MM.YYYY
+            # ПРАВИЛЬНЫЙ ПАРСИНГ ДАТЫ: ФОРМАТ DD.MM.YYYY
             df_display['_datetime_sort'] = pd.to_datetime(
                 df_display['Дата (МСК)'].astype(str) + ' ' + df_display['Время (МСК)'].astype(str),
-                format='%d.%m.%Y %H:%M:%S',  # ← ЯВНО УКАЗЫВАЕМ ФОРМАТ
+                format='%d.%m.%Y %H:%M:%S',
                 errors='coerce'
             )
 
@@ -6033,7 +6052,7 @@ class ProductionApp:
             # Преобразуем обратно в список словарей
             sorted_data = df_display.to_dict('records')
 
-            # 🆕 СОХРАНЯЕМ ОТСОРТИРОВАННЫЕ ДАННЫЕ ОБРАТНО
+            # СОХРАНЯЕМ ОТСОРТИРОВАННЫЕ ДАННЫЕ ОБРАТНО
             self.laser_table_data = sorted_data
 
             # Показываем первую и последнюю запись
@@ -6044,7 +6063,7 @@ class ProductionApp:
         except Exception as e:
             print(f"⚠️ Ошибка сортировки (формат DD.MM.YYYY): {e}")
 
-            # 🆕 ПОПРОБУЕМ АЛЬТЕРНАТИВНЫЙ ФОРМАТ
+            # ПОПРОБУЕМ АЛЬТЕРНАТИВНЫЙ ФОРМАТ
             try:
                 print("🔄 Пробуем альтернативный формат YYYY-MM-DD...")
                 df_display = pd.DataFrame(self.laser_table_data)
@@ -6055,6 +6074,7 @@ class ProductionApp:
                 df_display = df_display.sort_values('_datetime_sort', ascending=False, na_position='last')
                 df_display = df_display.drop('_datetime_sort', axis=1)
                 sorted_data = df_display.to_dict('records')
+                self.laser_table_data = sorted_data
                 print("✅ Альтернативный формат сработал!")
             except Exception as e2:
                 print(f"⚠️ И альтернативный формат не сработал: {e2}")
@@ -6067,10 +6087,10 @@ class ProductionApp:
         auto_count = 0
         pending_count = 0
 
-        # Заполняем таблицу ОТСОРТИРОВАННЫМИ данными
+        # З��полняем таблицу ОТСОРТИРОВАННЫМИ данными
         for idx, row_data in enumerate(sorted_data):
             date_val = row_data.get("Дата (МСК)", "")
-            time_val = row_data.get("Время (МСК)", "")
+            time_val = row_data.get("Време (МСК)", "")
             username = row_data.get("username", "")
             order = row_data.get("order", "")
             metal = row_data.get("metal", "")
@@ -6099,8 +6119,12 @@ class ProductionApp:
                 tag = 'pending'
                 pending_count += 1
 
-                # 🆕 ВСТАВЛЯЕМ С ЯВНЫМ ИНДЕКСОМ ДЛЯ СОХРАНЕНИЯ ПОРЯДКА
-                item_id = self.laser_import_tree.insert("", idx, values=values, tags=(tag,))
+            # ВСТАВЛЯЕМ С ЯВНЫМ ИНДЕКСОМ ДЛЯ СОХРАНЕНИЯ ПОРЯДКА
+            item_id = self.laser_import_tree.insert("", idx, values=values, tags=(tag,))
+
+            # СОХРАНЯЕМ ПОРЯДОК СОРТИРОВКИ В МЕТАДАННЫХ ЭЛЕМЕНТА
+            row_data['_sort_order'] = idx
+            row_data['_item_id'] = item_id
 
             # СОХРАНЯЕМ item_id В КЭШ
             if hasattr(self, 'laser_import_excel_filter'):
@@ -6111,37 +6135,47 @@ class ProductionApp:
         # АВТОПОДБОР ШИРИНЫ КОЛОНОК
         self.auto_resize_columns(self.laser_import_tree, min_width=80, max_width=400)
 
-        # ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ
+        # ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ ПОСЛЕ ЗАГРУЗКИ ДАННЫХ
         if active_filters_backup and hasattr(self, 'laser_import_excel_filter'):
+            print(f"🔄 Переприменяю фильтры импорта: {list(active_filters_backup.keys())}")
             self.laser_import_excel_filter.active_filters = active_filters_backup
             self.laser_import_excel_filter.reapply_all_filters()
 
-            # 🆕 ПРИНУДИТЕЛЬНАЯ ПЕРЕСОРТИРОВКА ПОСЛЕ ФИЛЬТРАЦИИ
-            visible_items = list(self.laser_import_tree.get_children(''))
+            # ВЫЗЫВАЕМ МЕТОД СОРТИРОВКИ (если он существует)
+            if hasattr(self, 'sort_laser_import_by_original_order'):
+                self.sort_laser_import_by_original_order()
 
-            # Собираем данные видимых элементов с их датами
-            items_with_dates = []
-            for item_id in visible_items:
-                values = self.laser_import_tree.item(item_id)['values']
-                date_str = str(values[0])  # Дата (МСК)
-                time_str = str(values[1])  # Время (МСК)
-                datetime_str = f"{date_str} {time_str}"
-                items_with_dates.append((item_id, datetime_str))
+        print(f"📊 Отображено: 🔵 Синих={manual_count}, 🟢 Зелёных={auto_count}, 🟡 Жёлтых={pending_count}")
 
-            # Сортируем по дате (новые сверху)
+    def sort_laser_import_by_original_order(self):
+        """Сортировка таблицы импорта по исходному порядку (дата убывает)"""
+        if not hasattr(self, 'laser_table_data') or not self.laser_table_data:
+            return
+
+        print("🔄 Восстановление порядка сортировки...")
+
+        # Собираем все видимые элементы с их порядком сортировки
+        items_to_sort = []
+
+        for item_id in self.laser_import_tree.get_children(''):
+            # Ищем соответствующую запись в laser_table_data
+            for row_data in self.laser_table_data:
+                if row_data.get('_item_id') == item_id:
+                    sort_order = row_data.get('_sort_order', 999999)
+                    items_to_sort.append((sort_order, item_id))
+                    break
+
+        # Сортируем по _sort_order (который соответствует дате)
+        items_to_sort.sort(key=lambda x: x[0])
+
+        # Переставляем элементы в правильном порядке
+        for new_index, (sort_order, item_id) in enumerate(items_to_sort):
             try:
-                items_with_dates.sort(
-                    key=lambda x: pd.to_datetime(x[1], format='%d.%m.%Y %H:%M:%S', errors='coerce'),
-                    reverse=True
-                )
-
-                # Переставляем элементы в правильном порядке
-                for idx, (item_id, _) in enumerate(items_with_dates):
-                    self.laser_import_tree.move(item_id, '', idx)
+                self.laser_import_tree.move(item_id, '', new_index)
             except:
                 pass
 
-        print(f"📊 Отображено: 🔵 Синих={manual_count}, 🟢 Зелёных={auto_count}, 🟡 Жёлтых={pending_count}")
+        print(f"✅ Порядок восстановлен: {len(items_to_sort)} элементов")
 
     def writeoff_selected_laser_row(self):
         """Списание выбранной строки"""
@@ -6578,9 +6612,20 @@ class ProductionApp:
 
     def refresh_laser_import_table(self):
         """Обновление таблицы импорта от лазерщиков"""
+
+        # 🆕 СОХРАНЯЕМ АКТИВНЫЕ ФИЛЬТРЫ ПЕРЕД ОЧИСТКОЙ
+        active_filters_backup = {}
+        if hasattr(self, 'laser_import_excel_filter') and self.laser_import_excel_filter.active_filters:
+            active_filters_backup = self.laser_import_excel_filter.active_filters.copy()
+            print(f"🔍 Сохранены фильтры: {list(active_filters_backup.keys())}")
+
         # Очищаем таблицу
         for item in self.laser_import_tree.get_children():
             self.laser_import_tree.delete(item)
+
+        # Очищаем кеш
+        if hasattr(self, 'laser_import_excel_filter'):
+            self.laser_import_excel_filter._all_item_cache = set()
 
         if not hasattr(self, 'laser_table_data') or self.laser_table_data is None:
             self.laser_table_data = []
@@ -6589,19 +6634,21 @@ class ProductionApp:
         if not self.laser_table_data:
             return
 
-        # СОРТИРОВКА: НОВЫЕ ЗАПИСИ ВВЕРХУ
+        # 🔥 СОРТИРОВКА С ПРАВИЛЬНЫМ ФОРМАТОМ ДАТЫ
         try:
+            print(f"🔄 Сортировка {len(self.laser_table_data)} записей перед отображением...")
+
             # Преобразуем в DataFrame
             df_display = pd.DataFrame(self.laser_table_data)
 
-            # Парсинг даты в формате DD.MM.YYYY HH:MM:SS
+            # 🆕 ПРАВИЛЬНЫЙ ПАРСИНГ ДАТЫ: ФОРМАТ DD.MM.YYYY
             df_display['_datetime_sort'] = pd.to_datetime(
                 df_display['Дата (МСК)'].astype(str) + ' ' + df_display['Время (МСК)'].astype(str),
-                format='%d.%m.%Y %H:%M:%S',
+                format='%d.%m.%Y %H:%M:%S',  # ← ЯВНО УКАЗЫВАЕМ ФОРМАТ
                 errors='coerce'
             )
 
-            # Сортируем по убыванию (новые вверху)
+            # Сортируем по убыванию (новые сверху)
             df_display = df_display.sort_values('_datetime_sort', ascending=False, na_position='last')
 
             # Удаляем временную колонку
@@ -6610,9 +6657,31 @@ class ProductionApp:
             # Преобразуем обратно в список словарей
             sorted_data = df_display.to_dict('records')
 
+            # Показываем первую и последнюю запись
+            if sorted_data:
+                first = f"{sorted_data[0].get('Дата (МСК)', '')} {sorted_data[0].get('Время (МСК)', '')}"
+                last = f"{sorted_data[-1].get('Дата (МСК)', '')} {sorted_data[-1].get('Время (МСК)', '')}"
+                print(f"✅ Отсортировано: ПЕРВАЯ (новая) = {first}, ПОСЛЕДНЯЯ (старая) = {last}")
         except Exception as e:
-            print(f"⚠️ Ошибка сортировки: {e}")
-            sorted_data = self.laser_table_data
+            print(f"⚠️ Ошибка сортировки (формат DD.MM.YYYY): {e}")
+
+            # 🆕 ПОПРОБУЕМ АЛЬТЕРНАТИВНЫЙ ФОРМАТ
+            try:
+                print("🔄 Пробуем альтернативный формат YYYY-MM-DD...")
+                df_display = pd.DataFrame(self.laser_table_data)
+                df_display['_datetime_sort'] = pd.to_datetime(
+                    df_display['Дата (МСК)'].astype(str) + ' ' + df_display['Время (МСК)'].astype(str),
+                    errors='coerce'
+                )
+                df_display = df_display.sort_values('_datetime_sort', ascending=False, na_position='last')
+                df_display = df_display.drop('_datetime_sort', axis=1)
+                sorted_data = df_display.to_dict('records')
+                print("✅ Альтернативный формат сработал!")
+            except Exception as e2:
+                print(f"⚠️ И альтернативный формат не сработал: {e2}")
+                import traceback
+                traceback.print_exc()
+                sorted_data = self.laser_table_data
 
         # 🆕 СОХРАНЯЕМ ОТСОРТИРОВАННЫЕ ДАННЫЕ ОБРАТНО
         self.laser_table_data = sorted_data
@@ -6654,9 +6723,33 @@ class ProductionApp:
                 tag = 'pending'
                 pending_count += 1
 
-            self.laser_import_tree.insert("", "end", values=values, tags=(tag,))
+            # 🆕 ВСТАВЛЯЕМ С ЯВНЫМ ИНДЕКСОМ ДЛЯ СОХРАНЕНИЯ ПОРЯДКА
+            item_id = self.laser_import_tree.insert("", idx, values=values, tags=(tag,))
 
-        self.auto_resize_columns(self.laser_import_tree)
+            # 🆕 СОХРАНЯЕМ ПОРЯДОК СОРТИРОВКИ В МЕТАДАННЫХ ЭЛЕМЕНТА
+            row_data['_sort_order'] = idx
+            row_data['_item_id'] = item_id
+
+            # СОХРАНЯЕМ item_id В КЭШ
+            if hasattr(self, 'laser_import_excel_filter'):
+                if not hasattr(self.laser_import_excel_filter, '_all_item_cache'):
+                    self.laser_import_excel_filter._all_item_cache = set()
+                self.laser_import_excel_filter._all_item_cache.add(item_id)
+
+        # АВТОПОДБОР ШИРИНЫ КОЛОНОК
+        self.auto_resize_columns(self.laser_import_tree, min_width=80, max_width=400)
+
+        # ПЕРЕПРИМЕНЯЕМ ФИЛЬТРЫ (если были сохранены)
+        if active_filters_backup and hasattr(self, 'laser_import_excel_filter'):
+            print(f"🔄 Переприменяю фильтры: {list(active_filters_backup.keys())}")
+            self.laser_import_excel_filter.active_filters = active_filters_backup
+            self.laser_import_excel_filter.reapply_all_filters()
+
+            # 🆕 ВЫЗЫВАЕМ МЕТОД СОРТИРОВКИ (если он существует)
+            if hasattr(self, 'sort_laser_import_by_original_order'):
+                self.sort_laser_import_by_original_order()
+
+        print(f"📊 Отображено: 🔵 Синих={manual_count}, 🟢 Зелёных={auto_count}, 🟡 Жёлтых={pending_count}")
 
     def test_add_rows(self):
         """Тестовая функция для проверки отображения строк"""
