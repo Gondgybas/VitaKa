@@ -669,9 +669,10 @@ class ProductionApp:
         self.notebook.add(self.details_frame, text='Учёт деталей')
         self.setup_details_tab()
 
-        self.balance_frame = tk.Frame(self.notebook, bg='white')
-        self.notebook.add(self.balance_frame, text='Баланс материалов')
-        self.setup_balance_tab()
+        # 🔒 ВРЕМЕННО СКРЫТА ВКЛАДКА "БАЛАНС МАТЕРИАЛОВ" (дублирует "Материалы на складе")
+        # self.balance_frame = tk.Frame(self.notebook, bg='white')
+        # self.notebook.add(self.balance_frame, text='Баланс материалов')
+        # self.setup_balance_tab()
 
         self.load_toggle_settings()
 
