@@ -5708,22 +5708,6 @@ class ProductionApp:
         tk.Button(buttons_frame, text="📁 Импорт файла", bg='#3498db', fg='white',
                   command=self.import_laser_table, **btn_style).pack(side=tk.LEFT, padx=5)
 
-        tk.Button(buttons_frame, text="✅ Списать выбранные", bg='#27ae60', fg='white',
-                  command=self.writeoff_laser_row, **btn_style).pack(side=tk.LEFT, padx=5)
-        # 🆕 НОВАЯ КНОПКА
-        tk.Button(buttons_frame, text="🔵 Пометить вручную", bg='#2196F3', fg='white',
-                  command=self.mark_manual_writeoff, **btn_style).pack(side=tk.LEFT, padx=5)
-
-        # 🆕 КНОПКА СНЯТИЯ ПОМЕТКИ
-        tk.Button(buttons_frame, text="↩️ Снять пометку", bg='#9E9E9E', fg='white',
-                  command=self.unmark_manual_writeoff, **btn_style).pack(side=tk.LEFT, padx=5)
-
-        tk.Button(buttons_frame, text="🗑️ Удалить строки", bg='#e74c3c', fg='white',
-                  command=self.delete_laser_row, **btn_style).pack(side=tk.LEFT, padx=5)
-
-        tk.Button(buttons_frame, text="💾 Экспорт таблицы", bg='#9b59b6', fg='white',
-                  command=self.export_laser_table, **btn_style).pack(side=tk.LEFT, padx=5)
-
         tk.Button(buttons_frame, text="✖ Сбросить фильтры", bg='#e67e22', fg='white',
                   command=self.clear_laser_import_filters, **btn_style).pack(side=tk.LEFT, padx=5)
 
@@ -5779,6 +5763,8 @@ class ProductionApp:
             self.laser_import_tree.column(col, width=width, anchor=tk.CENTER, minwidth=80, stretch=False)
 
         self.laser_import_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.laser_import_tree.bind('<Button-3>', self.on_laser_import_right_click)
 
         # 🆕 ИНИЦИАЛИЗАЦИЯ EXCEL-ФИЛЬТРА ДЛЯ ИМПОРТА
         self.laser_import_excel_filter = ExcelStyleFilter(
@@ -6657,6 +6643,124 @@ class ProductionApp:
                 self.sort_laser_import_by_original_order()
 
         print(f"📊 Отображено: 🔵 Синих={manual_count}, 🟢 Зелёных={auto_count}, 🟡 Жёлтых={pending_count}")
+
+    def on_laser_import_right_click(self, event):
+        """Обработчик правого клика на таблице импорта от лазерщиков"""
+        # Определяем регион клика
+        region = self.laser_import_tree.identify_region(event.x, event.y)
+
+        # Если клик на заголовке - выходим (чтобы работал фильтр)
+        if region == "heading":
+            return
+
+        # Определяем строку под курсором
+        item = self.laser_import_tree.identify_row(event.y)
+
+        # Если клик на строке и она не выделена - выделяем
+        if item and item not in self.laser_import_tree.selection():
+            self.laser_import_tree.selection_set(item)
+
+        # Показываем универсальное меню
+        self.show_laser_import_context_menu(event)
+
+    def show_laser_import_context_menu(self, event):
+        """Универсальное контекстное меню для таблицы импорта от лазерщиков"""
+        selected_count = len(self.laser_import_tree.selection())
+
+        # Создаём меню
+        context_menu = tk.Menu(self.root, tearoff=0, font=("Arial", 10))
+
+        # ========== ОПЕРАЦИИ С ВЫБРАННЫМИ СТРОКАМИ ==========
+        if selected_count > 0:
+            context_menu.add_command(
+                label=f"📊 Выбрано: {selected_count} шт",
+                state='disabled',
+                foreground='#0c5460'
+            )
+            context_menu.add_separator()
+
+            # Проверяем статус выбранных строк
+            has_pending = False
+            has_written_off = False
+            has_manual = False
+
+            for item in self.laser_import_tree.selection():
+                values = self.laser_import_tree.item(item)['values']
+                status = str(values[8]).strip() if len(values) > 8 else ""
+
+                if status in ["✓", "Да", "Yes"]:
+                    has_written_off = True
+                elif status == "Вручную":
+                    has_manual = True
+                else:
+                    has_pending = True
+
+            # ========== СПИСАНИЕ ==========
+            if has_pending:
+                context_menu.add_command(
+                    label=f"✅  Списать автоматически ({selected_count} шт)",
+                    command=self.writeoff_laser_row
+                )
+
+            if has_pending:
+                context_menu.add_command(
+                    label=f"🔵  Пометить вручную ({selected_count} шт)",
+                    command=self.mark_manual_writeoff
+                )
+
+            # ========== СНЯТИЕ ПОМЕТКИ ==========
+            if has_manual:
+                context_menu.add_command(
+                    label=f"↩️  Снять пометку 'Вручную' ({selected_count} шт)",
+                    command=self.unmark_manual_writeoff
+                )
+
+            # ========== УДАЛЕНИЕ ==========
+            context_menu.add_separator()
+
+            delete_label = f"🗑️  Удалить строки ({selected_count} шт)"
+            context_menu.add_command(
+                label=delete_label,
+                command=self.delete_laser_row
+            )
+
+            # ========== РЕДАКТИРОВАНИЕ (только для одной строки) ==========
+            if selected_count == 1:
+                context_menu.add_separator()
+                context_menu.add_command(
+                    label="✏️  Редактировать запись",
+                    command=self.edit_laser_row
+                )
+
+            context_menu.add_separator()
+
+        # ========== ОПЕРАЦИИ ИМПОРТА (ВСЕГДА ДОСТУПНЫ) ==========
+        context_menu.add_command(
+            label="📁  Импортировать файл",
+            command=self.import_laser_table
+        )
+
+        context_menu.add_separator()
+
+        # ========== ЭКСПОРТ (ВСЕГДА ДОСТУПЕН) ==========
+        context_menu.add_command(
+            label="💾  Экспорт таблицы",
+            command=self.export_laser_table
+        )
+
+        context_menu.add_separator()
+
+        # ========== ДОПОЛНИТЕЛЬНЫЕ ОПЦИИ ==========
+        context_menu.add_command(
+            label="🔄  Обновить таблицу",
+            command=self.refresh_laser_import_table
+        )
+
+        # Показываем меню
+        try:
+            context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            context_menu.grab_release()
 
     def sort_laser_import_by_original_order(self):
         """Сортировка таблицы импорта по исходному порядку (дата убывает)"""
