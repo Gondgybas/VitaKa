@@ -684,6 +684,8 @@ class ProductionApp:
         self.notebook.add(self.material_logs_frame, text="📊 История материалов")
         self.setup_material_logs_tab()
 
+        self.fix_russian_keyboard_shortcuts()
+
     def load_settings(self):
         """Загрузка настроек из файла"""
         settings_file = "app_settings.json"
@@ -841,6 +843,97 @@ class ProductionApp:
             cursor='hand2'
         )
         cancel_button.pack(side=tk.LEFT, padx=10)
+
+    def fix_russian_keyboard_shortcuts(self):
+        """Исправление горячих клавиш для русской раскладки"""
+
+        def universal_copy(event):
+            widget = self.root.focus_get()
+            try:
+                if hasattr(widget, 'selection_get') and widget.selection_present():
+                    text = widget.selection_get()
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(text)
+            except:
+                pass
+            return "break"
+
+        def universal_paste(event):
+            widget = self.root.focus_get()
+            try:
+                text = self.root.clipboard_get()
+                if isinstance(widget, tk.Entry):
+                    try:
+                        if widget.selection_present():
+                            widget.delete(tk.SEL_FIRST, tk.SEL_LAST)
+                    except:
+                        pass
+                    widget.insert(tk.INSERT, text)
+                elif isinstance(widget, tk.Text):
+                    try:
+                        if widget.tag_ranges(tk.SEL):
+                            widget.delete(tk.SEL_FIRST, tk.SEL_LAST)
+                    except:
+                        pass
+                    widget.insert(tk.INSERT, text)
+            except:
+                pass
+            return "break"
+
+        def universal_cut(event):
+            widget = self.root.focus_get()
+            try:
+                if hasattr(widget, 'selection_get') and widget.selection_present():
+                    text = widget.selection_get()
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(text)
+                    widget.delete(tk.SEL_FIRST, tk.SEL_LAST)
+            except:
+                pass
+            return "break"
+
+        def universal_select_all(event):
+            widget = self.root.focus_get()
+            try:
+                if isinstance(widget, tk.Entry):
+                    widget.select_range(0, tk.END)
+                    widget.icursor(tk.END)
+                elif isinstance(widget, tk.Text):
+                    widget.tag_add(tk.SEL, "1.0", tk.END)
+                    widget.mark_set(tk.INSERT, tk.END)
+            except:
+                pass
+            return "break"
+
+        def handle_hotkey(event):
+            """Универсальный обработчик горячих клавиш через keycode"""
+            # Проверяем что нажат Control
+            if not (event.state & 0x0004):  # 0x0004 = Control
+                return
+
+            keycode = event.keycode
+
+            # keycode 67 = физическая клавиша C (независимо от раскладки)
+            if keycode == 67:
+                return universal_copy(event)
+
+            # keycode 86 = физическая клавиша V
+            elif keycode == 86:
+                return universal_paste(event)
+
+            # keycode 88 = физическая клавиша X
+            elif keycode == 88:
+                return universal_cut(event)
+
+            # keycode 65 = физическая клавиша A
+            elif keycode == 65:
+                return universal_select_all(event)
+
+        # Привязываем к событию нажатия ЛЮБОЙ клавиши
+        self.root.bind_all("<KeyPress>", handle_hotkey)
+
+        print("✅ Горячие клавиши настроены через keycode (работают на любой раскладке)")
+        print("   Поддержка: Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+A")
 
     def create_filter_panel(self, parent_frame, tree_widget, columns_to_filter, refresh_callback):
         """Создание панели фильтрации для любой таблицы"""
