@@ -8402,6 +8402,10 @@ class ProductionApp:
     def refresh_balance(self):
         """Обновление таблицы баланса материалов"""
 
+        # 🆕 ПРОВЕРКА: если вкладка скрыта - выходим без ошибок
+        if not hasattr(self, 'balance_tree'):
+            return
+
         # СОХРАНЯЕМ АКТИВНЫЕ ФИЛЬТРЫ ПЕРЕД ОЧИСТКОЙ
         active_filters_backup = {}
         if hasattr(self, 'balance_excel_filter') and self.balance_excel_filter.active_filters:
