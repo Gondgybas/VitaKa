@@ -5890,7 +5890,7 @@ class ProductionApp:
         self.details_filter_status.pack(pady=5)
 
         # Привязка правого клика для копирования информации о детали
-        self.details_tree.bind('<Button-3>', self.on_details_tab_right_click)
+        self.details_tree.bind('<Button-3>', self.on_details_right_click)
 
         # Цветовые теги
         self.details_tree.tag_configure('completed', background='#c8e6c9', foreground='#1b5e20')  # Зелёный
@@ -5929,17 +5929,8 @@ class ProductionApp:
 
         btn_style = {"font": ("Arial", 10, "bold"), "width": 18, "height": 2}
 
-        tk.Button(buttons_frame, text="🔄 Обновить", bg='#3498db', fg='white',
-                  command=self.refresh_details, **btn_style).pack(side=tk.LEFT, padx=5)
-
         tk.Button(buttons_frame, text="✖ Сбросить фильтры", bg='#e67e22', fg='white',
                   command=self.clear_details_filters, **btn_style).pack(side=tk.LEFT, padx=5)
-
-        tk.Button(buttons_frame, text="📊 Экспорт в Excel", bg='#27ae60', fg='white',
-                  command=self.export_details, **btn_style).pack(side=tk.LEFT, padx=5)
-
-        tk.Button(buttons_frame, text="📈 Статистика", bg='#9c27b0', fg='white',
-                  command=self.show_details_statistics, **btn_style).pack(side=tk.LEFT, padx=5)
 
         # Статусная строка
         self.details_status_label = tk.Label(
@@ -6301,6 +6292,74 @@ class ProductionApp:
                 bg='#d4edda',
                 fg='#155724'
             )
+
+    def on_details_right_click(self, event):
+        """Обработчик правого клика на таблице учёта де��алей"""
+        # Определяем регион клика
+        region = self.details_tree.identify_region(event.x, event.y)
+
+        # Если клик на заголовке - выходим (чтобы работал фильтр)
+        if region == "heading":
+            return
+
+        # Определяем строку под курсором
+        item = self.details_tree.identify_row(event.y)
+
+        # Если клик на строке и она не выделена - выделяем
+        if item and item not in self.details_tree.selection():
+            self.details_tree.selection_set(item)
+
+        # Показываем универсальное меню
+        self.show_details_context_menu(event)
+
+    def show_details_context_menu(self, event):
+        """Универсальное контекстное меню для таблицы учёта деталей"""
+        selected_count = len(self.details_tree.selection())
+
+        # Создаём меню
+        context_menu = tk.Menu(self.root, tearoff=0, font=("Arial", 10))
+
+        # ========== ОПЕРАЦИИ С ВЫБРАННЫМИ СТРОКАМИ ==========
+        if selected_count > 0:
+            context_menu.add_command(
+                label=f"📊 Выбрано: {selected_count} шт",
+                state='disabled',
+                foreground='#0c5460'
+            )
+            context_menu.add_separator()
+
+            # Копирование информации (только для одной строки)
+            if selected_count == 1:
+                context_menu.add_command(
+                    label="📋  Копировать информацию",
+                    command=lambda: self.copy_details_tab_info(self.details_tree.selection()[0])
+                )
+                context_menu.add_separator()
+
+        # ========== ЭКСПОРТ (ВСЕГДА ДОСТУПЕН) ==========
+        context_menu.add_command(
+            label="📊  Экспорт в Excel",
+            command=self.export_details
+        )
+
+        context_menu.add_command(
+            label="📈  Статистика",
+            command=self.show_details_statistics
+        )
+
+        context_menu.add_separator()
+
+        # ========== ДОПОЛНИТЕЛЬНЫЕ ОПЦИИ ==========
+        context_menu.add_command(
+            label="🔄  Обновить таблицу",
+            command=self.refresh_details
+        )
+
+        # Показываем меню
+        try:
+            context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            context_menu.grab_release()
 
     def export_details(self):
         """Экспорт учёта деталей в Excel"""
