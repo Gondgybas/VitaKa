@@ -42,6 +42,13 @@ def initialize_database():
             "Длина", "Ширина", "Старое кол-во", "Новое кол-во", "Изменение", "Комментарий"
         ])
 
+        # 🆕 ЛИСТ ДЛЯ ЖУРНАЛА СПИСАНИЙ ГИБКИ
+        bending_writeoffs_sheet = wb.create_sheet("BendingWriteOffs")
+        bending_writeoffs_sheet.append([
+            "ID списания", "ID импорта гибки", "ID заказа", "ID детали",
+            "Название детали", "Количество", "Дата списания", "Оператор", "Комментарий", "Тип"
+        ])
+
         wb.save(DATABASE_FILE)
         print(f"База данных '{DATABASE_FILE}' создана!")
 
@@ -573,6 +580,9 @@ class ExcelStyleFilter:
                 # Проверяем что это именно таблица импорта
                 if hasattr(app_instance, 'laser_import_tree') and self.tree == app_instance.laser_import_tree:
                     app_instance.sort_laser_import_by_original_order()
+            if hasattr(app_instance, 'sort_bending_import_by_original_order'):
+                if hasattr(app_instance, 'bending_import_tree') and self.tree == app_instance.bending_import_tree:
+                    app_instance.sort_bending_import_by_original_order()
 
     def clear_all_filters(self):
         """очистить все фильтры"""
@@ -641,6 +651,9 @@ class ProductionApp:
         # 🆕 Инициализация данных для импорта от лазерщиков
         self.laser_table_data = []
 
+        # 🆕 Инициализация данных для импорта от гибщиков
+        self.bending_table_data = []
+
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
@@ -663,6 +676,11 @@ class ProductionApp:
         self.laser_import_frame = tk.Frame(self.notebook, bg='white')
         self.notebook.add(self.laser_import_frame, text='Импорт от лазерщиков')
         self.setup_laser_import_tab()
+
+        # 🆕 ВКЛАДКА ИМПОРТ ОТ ГИБЩИКОВ
+        self.bending_import_frame = tk.Frame(self.notebook, bg='white')
+        self.notebook.add(self.bending_import_frame, text='Импорт от гибщиков')
+        self.setup_bending_import_tab()
 
         # 🆕 НОВАЯ ВКЛАДКА
         self.details_frame = tk.Frame(self.notebook, bg='white')
@@ -752,7 +770,7 @@ class ProductionApp:
 
         path_info = tk.Label(
             path_frame,
-            text="В этой папке должны находиться файлы:\n• production_database.xlsx\n• laser_import_cache.xlsx",
+            text="В этой папке должны находиться файлы:\n• production_database.xlsx\n• laser_import_cache.xlsx\n• bending_import_cache.xlsx",
             bg='#ecf0f1',
             font=("Arial", 9),
             fg='#7f8c8d',
@@ -1160,6 +1178,9 @@ class ProductionApp:
 
         if hasattr(self, 'laser_table_data') and self.laser_table_data:
             self.save_laser_import_cache()
+
+        if hasattr(self, 'bending_table_data') and self.bending_table_data:
+            self.save_bending_import_cache()
 
         # Сохраняем настройки переключателей
         self.save_toggle_settings()
@@ -8980,6 +9001,1107 @@ class ProductionApp:
             messagebox.showinfo("Успех", f"Баланс сохранен:\n{file_path}")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
+
+    # =====================================================================
+    # 🆕 ВКЛАДКА "ИМПОРТ ОТ ГИБЩИКОВ"
+    # =====================================================================
+
+    def setup_bending_import_tab(self):
+        """Вкладка импорта от гибщиков"""
+        for widget in self.bending_import_frame.winfo_children():
+            widget.destroy()
+
+        header = tk.Label(self.bending_import_frame, text="📥 Импорт данных от гибщиков",
+                          font=("Arial", 16, "bold"), bg='white', fg='#8e44ad')
+        header.pack(pady=10)
+
+        info_frame = tk.LabelFrame(self.bending_import_frame, text="ℹ️ Информация",
+                                   bg='#e8daef', font=("Arial", 10, "bold"))
+        info_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        instructions = (
+            "\n    📋 Формат файла Excel:\n"
+            "    • Колонки: Дата (МСК), Время (МСК), Оператор, Заказчик, Материал,\n"
+            "      Толщина, Название детали, Количество, Количество брака, Тип действия, Статус, GroupMessageID\n\n"
+            "    📌 Цвета: 🟢 Зелёный — списано  |  🔴 Красный — Отмена  |  🟡 Жёлтый — есть брак\n"
+        )
+        tk.Label(info_frame, text=instructions, bg='#e8daef',
+                 font=("Arial", 9), justify=tk.LEFT).pack(padx=10, pady=5)
+
+        buttons_frame = tk.Frame(self.bending_import_frame, bg='white')
+        buttons_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        btn_style = {"font": ("Arial", 10, "bold"), "width": 18, "height": 2}
+
+        tk.Button(buttons_frame, text="📥 Импорт Excel", bg='#8e44ad', fg='white',
+                  command=self.import_bending_table, **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="✖ Сбросить фильтры", bg='#e67e22', fg='white',
+                  command=self.clear_bending_import_filters, **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="💾 Экспорт", bg='#27ae60', fg='white',
+                  command=self.bending_export_table, **btn_style).pack(side=tk.LEFT, padx=5)
+        tk.Button(buttons_frame, text="🔄 Обновить", bg='#3498db', fg='white',
+                  command=self.refresh_bending_import_table, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        table_label = tk.Label(self.bending_import_frame,
+                               text="📊 Импортированные данные (ПКМ для операций)",
+                               font=("Arial", 11, "bold"), bg='white', fg='#2c3e50')
+        table_label.pack(pady=5)
+
+        tree_frame = tk.Frame(self.bending_import_frame, bg='white')
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+
+        scroll_y = tk.Scrollbar(tree_frame, orient=tk.VERTICAL)
+        scroll_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
+
+        self.bending_import_tree = ttk.Treeview(
+            tree_frame,
+            columns=("Дата", "Время", "Оператор", "Заказчик", "Материал", "Толщина",
+                     "Название детали", "Кол-во", "Брак", "Тип действия", "Статус",
+                     "Списано", "Дата списания", "Связ. заказ"),
+            show="headings",
+            height=20,
+            selectmode='extended',
+            yscrollcommand=scroll_y.set,
+            xscrollcommand=scroll_x.set
+        )
+
+        scroll_y.config(command=self.bending_import_tree.yview)
+        scroll_x.config(command=self.bending_import_tree.xview)
+        scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
+        scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
+
+        columns_config = {
+            "Дата": 100, "Время": 80, "Оператор": 150, "Заказчик": 150,
+            "Материал": 120, "Толщина": 70, "Название детали": 250,
+            "Кол-во": 70, "Брак": 60, "Тип действия": 120, "Статус": 80,
+            "Списано": 110, "Дата списания": 150, "Связ. заказ": 200,
+        }
+
+        for col, width in columns_config.items():
+            self.bending_import_tree.heading(col, text=col)
+            self.bending_import_tree.column(col, width=width, anchor=tk.CENTER, minwidth=50, stretch=False)
+
+        self.bending_import_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.bending_import_tree.bind('<Button-3>', self.on_bending_import_right_click)
+
+        self.bending_import_excel_filter = ExcelStyleFilter(
+            tree=self.bending_import_tree,
+            refresh_callback=self.refresh_bending_import_table
+        )
+
+        self.bending_import_filter_status = tk.Label(
+            self.bending_import_frame, text="",
+            font=("Arial", 9), bg='#e8daef', fg='#6c3483'
+        )
+        self.bending_import_filter_status.pack(pady=5)
+
+        # 🟢 Зелёный: списано  🔴 Красный: Отмена  🟡 Жёлтый: есть брак  ⚪ белый: обычное
+        self.bending_import_tree.tag_configure('written_off', background='#d4edda', foreground='#155724')
+        self.bending_import_tree.tag_configure('cancelled', background='#f8d7da', foreground='#721c24')
+        self.bending_import_tree.tag_configure('has_scrap', background='#fff3cd', foreground='#856404')
+        self.bending_import_tree.tag_configure('normal', background='white', foreground='#000000')
+
+        self.bending_status_label = tk.Label(
+            self.bending_import_frame,
+            text="📂 Импортируйте файл для начала работы",
+            font=("Arial", 10), bg='#ecf0f1', fg='#2c3e50',
+            relief=tk.SUNKEN, anchor='w', padx=10, pady=5
+        )
+        self.bending_status_label.pack(fill=tk.X, side=tk.BOTTOM, padx=20, pady=10)
+
+        print("✅ setup_bending_import_tab() выполнен успешно")
+        self.load_bending_import_cache()
+
+    def refresh_bending_import_table(self):
+        """Обновление таблицы импорта от гибщиков"""
+        active_filters_backup = {}
+        if hasattr(self, 'bending_import_excel_filter') and self.bending_import_excel_filter.active_filters:
+            active_filters_backup = self.bending_import_excel_filter.active_filters.copy()
+
+        for item in self.bending_import_tree.get_children():
+            self.bending_import_tree.delete(item)
+
+        if hasattr(self, 'bending_import_excel_filter'):
+            self.bending_import_excel_filter._all_item_cache = set()
+
+        if not hasattr(self, 'bending_table_data') or self.bending_table_data is None:
+            self.bending_table_data = []
+            return
+
+        if not self.bending_table_data:
+            return
+
+        # Сортировка: новые сверху
+        try:
+            df_display = pd.DataFrame(self.bending_table_data)
+            df_display['_datetime_sort'] = pd.to_datetime(
+                df_display['Дата (МСК)'].astype(str) + ' ' + df_display['Время (МСК)'].astype(str),
+                format='%d.%m.%Y %H:%M:%S', errors='coerce'
+            )
+            df_display = df_display.sort_values('_datetime_sort', ascending=False, na_position='last')
+            df_display = df_display.drop('_datetime_sort', axis=1)
+            sorted_data = df_display.to_dict('records')
+            self.bending_table_data = sorted_data
+        except Exception as e:
+            print(f"⚠️ Ошибка сортировки гибщиков (DD.MM.YYYY): {e}")
+            try:
+                df_display = pd.DataFrame(self.bending_table_data)
+                df_display['_datetime_sort'] = pd.to_datetime(
+                    df_display['Дата (МСК)'].astype(str) + ' ' + df_display['Время (МСК)'].astype(str),
+                    errors='coerce'
+                )
+                df_display = df_display.sort_values('_datetime_sort', ascending=False, na_position='last')
+                df_display = df_display.drop('_datetime_sort', axis=1)
+                sorted_data = df_display.to_dict('records')
+                self.bending_table_data = sorted_data
+            except Exception:
+                sorted_data = self.bending_table_data
+
+        written_off_count = cancelled_count = scrap_count = normal_count = 0
+
+        for idx, row_data in enumerate(sorted_data):
+            date_val = str(row_data.get("Дата (МСК)", ""))
+            time_val = str(row_data.get("Время (МСК)", ""))
+            operator = str(row_data.get("Оператор", ""))
+            customer = str(row_data.get("Заказчик", ""))
+            material = str(row_data.get("Материал", ""))
+            thickness = str(row_data.get("Толщина", ""))
+            part_name = str(row_data.get("Название детали", ""))
+            quantity = str(row_data.get("Количество", ""))
+            scrap = str(row_data.get("Количество брака", ""))
+            action_type = str(row_data.get("Тип действия", ""))
+            status = str(row_data.get("Статус", ""))
+            written_off = str(row_data.get("Списано", "")).strip()
+            writeoff_date = str(row_data.get("Дата списания", ""))
+            linked_order = str(row_data.get("Связанный заказ", ""))
+
+            if written_off in ('nan', 'None', 'NaN'):
+                written_off = ""
+
+            values = (date_val, time_val, operator, customer, material, thickness,
+                      part_name, quantity, scrap, action_type, status,
+                      written_off, writeoff_date, linked_order)
+
+            # Цветовая индикация (приоритет: списано > отмена > брак > обычное)
+            if written_off.startswith("✓"):
+                tag = 'written_off'
+                written_off_count += 1
+            elif status.strip() == "Отмена":
+                tag = 'cancelled'
+                cancelled_count += 1
+            else:
+                try:
+                    scrap_qty = float(scrap) if scrap and scrap not in ('', 'nan', 'None', 'NaN') else 0
+                except Exception:
+                    scrap_qty = 0
+                if scrap_qty > 0:
+                    tag = 'has_scrap'
+                    scrap_count += 1
+                else:
+                    tag = 'normal'
+                    normal_count += 1
+
+            item_id = self.bending_import_tree.insert("", idx, values=values, tags=(tag,))
+            row_data['_sort_order'] = idx
+            row_data['_item_id'] = item_id
+
+            if hasattr(self, 'bending_import_excel_filter'):
+                if not hasattr(self.bending_import_excel_filter, '_all_item_cache'):
+                    self.bending_import_excel_filter._all_item_cache = set()
+                self.bending_import_excel_filter._all_item_cache.add(item_id)
+
+        self.auto_resize_columns(self.bending_import_tree, min_width=50, max_width=400)
+
+        if active_filters_backup and hasattr(self, 'bending_import_excel_filter'):
+            self.bending_import_excel_filter.active_filters = active_filters_backup
+            self.bending_import_excel_filter.reapply_all_filters()
+            if hasattr(self, 'sort_bending_import_by_original_order'):
+                self.sort_bending_import_by_original_order()
+
+        print(f"📊 Гибщики: 🟢={written_off_count} 🔴={cancelled_count} 🟡={scrap_count} ⚪={normal_count}")
+
+    def import_bending_table(self):
+        """Импорт таблицы от гибщиков с сохранением статусов существующих записей"""
+        file_path = filedialog.askopenfilename(
+            title="Выберите файл от гибщиков",
+            filetypes=[("Excel files", "*.xlsx *.xls"), ("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+        if not file_path:
+            return
+
+        try:
+            if file_path.lower().endswith('.csv'):
+                try:
+                    df = pd.read_csv(file_path, sep='\t', encoding='utf-8')
+                except Exception:
+                    try:
+                        df = pd.read_csv(file_path, sep=';', encoding='utf-8')
+                    except Exception:
+                        df = pd.read_csv(file_path, sep=';', encoding='cp1251')
+            else:
+                df = pd.read_excel(file_path, engine='openpyxl')
+
+            required = ["Дата (МСК)", "Время (МСК)", "Оператор", "Заказчик", "Название детали", "Количество"]
+            missing = [col for col in required if col not in df.columns]
+            if missing:
+                messagebox.showerror("Ошибка", f"Отсутствуют обязательные колонки:\n{', '.join(missing)}")
+                return
+
+            # Добавляем необязательные колонки, если их нет
+            for col in ["Материал", "Толщина", "Количество брака", "Тип действия", "Статус", "GroupMessageID"]:
+                if col not in df.columns:
+                    df[col] = ""
+            for col in ["Списано", "Дата списания", "Связанный заказ"]:
+                if col not in df.columns:
+                    df[col] = ""
+
+            def create_bending_row_key(row):
+                return (
+                    str(row.get("Дата (МСК)", "")),
+                    str(row.get("Время (МСК)", "")),
+                    str(row.get("Оператор", "")),
+                    str(row.get("Заказчик", "")),
+                    str(row.get("Название детали", "")),
+                    str(row.get("Количество", ""))
+                )
+
+            existing_rows = {}
+            if hasattr(self, 'bending_table_data') and self.bending_table_data:
+                for row_data in self.bending_table_data:
+                    key = create_bending_row_key(row_data)
+                    existing_rows[key] = {
+                        "Списано": row_data.get("Списано", ""),
+                        "Дата списания": row_data.get("Дата списания", ""),
+                        "Связанный заказ": row_data.get("Связанный заказ", "")
+                    }
+
+            new_rows = []
+            updated_rows = 0
+            for _, row in df.iterrows():
+                row_dict = row.to_dict()
+                key = create_bending_row_key(row_dict)
+                if key in existing_rows:
+                    row_dict["Списано"] = existing_rows[key]["Списано"]
+                    row_dict["Дата списания"] = existing_rows[key]["Дата списания"]
+                    row_dict["Связанный заказ"] = existing_rows[key]["Связанный заказ"]
+                    updated_rows += 1
+                else:
+                    row_dict.setdefault("Списано", "")
+                    row_dict.setdefault("Дата списания", "")
+                    row_dict.setdefault("Связанный заказ", "")
+                new_rows.append(row_dict)
+
+            new_keys = {create_bending_row_key(r) for r in new_rows}
+            merged_data = []
+            new_count = 0
+
+            if hasattr(self, 'bending_table_data') and self.bending_table_data:
+                for old_row in self.bending_table_data:
+                    if create_bending_row_key(old_row) in new_keys:
+                        merged_data.append(old_row)
+
+            for new_row in new_rows:
+                if create_bending_row_key(new_row) not in existing_rows:
+                    merged_data.append(new_row)
+                    new_count += 1
+
+            self.bending_table_data = merged_data
+
+            # Сортировка: новые сверху
+            try:
+                df_merged = pd.DataFrame(self.bending_table_data)
+                df_merged['_datetime_sort'] = pd.to_datetime(
+                    df_merged['Дата (МСК)'].astype(str) + ' ' + df_merged['Время (МСК)'].astype(str),
+                    errors='coerce'
+                )
+                df_merged = df_merged.sort_values('_datetime_sort', ascending=False, na_position='last')
+                df_merged = df_merged.drop('_datetime_sort', axis=1)
+                self.bending_table_data = df_merged.to_dict('records')
+            except Exception as e:
+                print(f"⚠️ Ошибка сортировки после импорта гибщиков: {e}")
+
+            self.refresh_bending_import_table()
+            self.bending_import_tree.update_idletasks()
+            self.bending_import_frame.update()
+            self.auto_resize_columns(self.bending_import_tree)
+
+            items_count = len(self.bending_import_tree.get_children())
+
+            if hasattr(self, 'bending_status_label'):
+                self.bending_status_label.config(
+                    text=f"✅ Всего: {items_count} | 🆕 Новых: {new_count} | 🔄 Статусов сохранено: {updated_rows}",
+                    bg='#d4edda', fg='#155724'
+                )
+
+            try:
+                self.save_bending_import_cache()
+            except Exception as cache_err:
+                print(f"⚠️ Не удалось сохранить кэш гибщиков: {cache_err}")
+
+            messagebox.showinfo("Успех",
+                f"✅ Импорт завершён!\n\n"
+                f"📊 Всего записей: {items_count}\n"
+                f"🆕 Новых: {new_count}\n"
+                f"🔄 Сохранено статусов: {updated_rows}"
+            )
+
+        except Exception as e:
+            messagebox.showerror("Ошибка импорта", f"Не удалось импортировать файл:\n\n{str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def clear_bending_import_filters(self):
+        """Сбросить все фильтры таблицы гибщиков"""
+        if hasattr(self, 'bending_import_excel_filter'):
+            self.bending_import_excel_filter.clear_all_filters()
+
+    def on_bending_import_right_click(self, event):
+        """Обработчик ПКМ на таблице импорта от гибщиков"""
+        region = self.bending_import_tree.identify_region(event.x, event.y)
+        if region == "heading":
+            return
+        item = self.bending_import_tree.identify_row(event.y)
+        if item and item not in self.bending_import_tree.selection():
+            self.bending_import_tree.selection_set(item)
+        self.show_bending_import_context_menu(event)
+
+    def show_bending_import_context_menu(self, event):
+        """Контекстное меню для таблицы импорта от гибщиков"""
+        selected_count = len(self.bending_import_tree.selection())
+        context_menu = tk.Menu(self.root, tearoff=0, font=("Arial", 10))
+
+        if selected_count > 0:
+            context_menu.add_command(
+                label=f"📊 Выбрано: {selected_count} шт",
+                state='disabled', foreground='#0c5460'
+            )
+            context_menu.add_separator()
+
+            has_pending = False
+            has_written_off = False
+
+            for item in self.bending_import_tree.selection():
+                values = self.bending_import_tree.item(item)['values']
+                status = str(values[11]).strip() if len(values) > 11 else ""
+                if status.startswith("✓"):
+                    has_written_off = True
+                else:
+                    has_pending = True
+
+            if has_pending:
+                context_menu.add_command(label="✓  Списать деталь", command=self.bending_writeoff_selected)
+                context_menu.add_command(label="✓  Пометить как списанное", command=self.bending_mark_manual_writeoff)
+
+            if has_written_off:
+                context_menu.add_command(label="↩️  Отменить списание", command=self.bending_unmark_writeoff)
+
+            context_menu.add_separator()
+            context_menu.add_command(
+                label="📋  Копировать информацию о детали",
+                command=self._bending_copy_selected_info
+            )
+            context_menu.add_separator()
+            context_menu.add_command(
+                label=f"🗑️  Удалить строки ({selected_count} шт)",
+                command=self.bending_delete_row
+            )
+            context_menu.add_separator()
+
+        context_menu.add_command(label="📥  Импортировать файл", command=self.import_bending_table)
+        context_menu.add_command(label="💾  Экспорт таблицы", command=self.bending_export_table)
+        context_menu.add_separator()
+        context_menu.add_command(label="🔄  Обновить таблицу", command=self.refresh_bending_import_table)
+        context_menu.add_command(label="✖  Сбросить фильтры", command=self.clear_bending_import_filters)
+
+        try:
+            context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            context_menu.grab_release()
+
+    def _bending_copy_selected_info(self):
+        """Копирование информации о выбранных деталях гибщиков"""
+        selected = self.bending_import_tree.selection()
+        if not selected:
+            return
+        header = "Дата | Время | Оператор | Заказчик | Деталь | Кол-во | Статус"
+        lines = [header]
+        for item in selected:
+            values = self.bending_import_tree.item(item)['values']
+            line = " | ".join([str(v) for v in values[:7]])
+            lines.append(line)
+        text = "\n".join(lines)
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        messagebox.showinfo("Скопировано", f"Скопировано {len(selected)} строк(и)")
+
+    def sort_bending_import_by_original_order(self):
+        """Восстановление порядка сортировки таблицы гибщиков"""
+        if not hasattr(self, 'bending_table_data') or not self.bending_table_data:
+            return
+        items_to_sort = []
+        for item_id in self.bending_import_tree.get_children(''):
+            for row_data in self.bending_table_data:
+                if row_data.get('_item_id') == item_id:
+                    sort_order = row_data.get('_sort_order', 999999)
+                    items_to_sort.append((sort_order, item_id))
+                    break
+        items_to_sort.sort(key=lambda x: x[0])
+        for new_index, (sort_order, item_id) in enumerate(items_to_sort):
+            try:
+                self.bending_import_tree.move(item_id, '', new_index)
+            except Exception:
+                pass
+
+    @staticmethod
+    def bending_similarity(a, b):
+        """Процент схожести двух строк (0-100) по алгоритму SequenceMatcher"""
+        from difflib import SequenceMatcher
+        return int(SequenceMatcher(None, str(a).lower(), str(b).lower()).ratio() * 100)
+
+    def bending_writeoff_selected(self):
+        """Умное сопоставление и списание деталей от гибщиков"""
+        selected_items = self.bending_import_tree.selection()
+        if not selected_items:
+            messagebox.showwarning("Предупреждение", "Выберите строку для списания!")
+            return
+
+        if len(selected_items) > 1:
+            messagebox.showinfo(
+                "Информация",
+                "Для умного сопоставления выберите одну строку.\n"
+                "Для массовой ручной пометки используйте 'Пометить как списанное'."
+            )
+            return
+
+        item = selected_items[0]
+        values = self.bending_import_tree.item(item)['values']
+        written_off = str(values[11]).strip() if len(values) > 11 else ""
+        if written_off.startswith("✓"):
+            messagebox.showinfo("Информация", "Эта деталь уже списана!")
+            return
+
+        item_index = self.bending_import_tree.index(item)
+        if item_index >= len(self.bending_table_data):
+            messagebox.showerror("Ошибка", "Не удалось найти данные строки!")
+            return
+
+        row_data = self.bending_table_data[item_index]
+        self._open_bending_writeoff_dialog(item, item_index, row_data)
+
+    def _open_bending_writeoff_dialog(self, tree_item, item_index, row_data):
+        """Открыть диалог умного списания гибки"""
+        part_name = str(row_data.get("Название детали", ""))
+        customer = str(row_data.get("Заказчик", ""))
+        operator = str(row_data.get("Оператор", ""))
+        date_val = str(row_data.get("Дата (МСК)", ""))
+        time_val = str(row_data.get("Время (МСК)", ""))
+        quantity = str(row_data.get("Количество", ""))
+        material = str(row_data.get("Материал", ""))
+        thickness = str(row_data.get("Толщина", ""))
+
+        try:
+            orders_df = load_data("Orders")
+            order_details_df = load_data("OrderDetails")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось загрузить данные:\n{e}")
+            return
+
+        # Поиск кандидатов с нечётким сравнением
+        candidates = []
+        if not order_details_df.empty and not orders_df.empty:
+            for _, order_row in orders_df.iterrows():
+                order_id = order_row.get("ID заказа")
+                order_name = str(order_row.get("Название заказа", ""))
+                order_customer = str(order_row.get("Заказчик", ""))
+                details = order_details_df[order_details_df["ID заказа"] == order_id]
+                customer_sim = self.bending_similarity(customer, order_customer)
+                for _, detail_row in details.iterrows():
+                    detail_name = str(detail_row.get("Название детали", ""))
+                    part_sim = self.bending_similarity(part_name, detail_name)
+                    combined = int(customer_sim * 0.3 + part_sim * 0.7)
+                    bent_raw = detail_row.get("Погнуто", 0)
+                    bent_qty = int(bent_raw) if pd.notna(bent_raw) else 0
+                    candidates.append({
+                        "combined": combined,
+                        "part_sim": part_sim,
+                        "customer_sim": customer_sim,
+                        "order_id": order_id,
+                        "order_name": order_name,
+                        "order_customer": order_customer,
+                        "detail_id": detail_row.get("ID"),
+                        "detail_name": detail_name,
+                        "required_qty": int(detail_row.get("Количество", 0)),
+                        "bent_qty": bent_qty,
+                    })
+
+        candidates.sort(key=lambda x: x["combined"], reverse=True)
+        top5 = candidates[:5]
+
+        # Диалог
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Умное списание детали от гибщиков")
+        dialog.geometry("780x640")
+        dialog.configure(bg='#ecf0f1')
+        dialog.grab_set()
+
+        tk.Label(dialog, text="🔧 Списание детали от гибщиков",
+                 font=("Arial", 14, "bold"), bg='#ecf0f1', fg='#8e44ad').pack(pady=10)
+
+        # Информация из импорта
+        info_frame = tk.LabelFrame(dialog, text="📋 Информация из импорта",
+                                   bg='#e8daef', font=("Arial", 10, "bold"))
+        info_frame.pack(fill=tk.X, padx=15, pady=5)
+        info_text = (
+            f"Оператор: {operator}   |   Дата: {date_val} {time_val}\n"
+            f"Заказчик: {customer}   |   Деталь: {part_name}\n"
+            f"Количество: {quantity}   |   Материал: {material}   |   Толщина: {thickness}"
+        )
+        tk.Label(info_frame, text=info_text, bg='#e8daef',
+                 font=("Arial", 10), justify=tk.LEFT).pack(padx=10, pady=8)
+
+        # Совпадения
+        matches_frame = tk.LabelFrame(dialog, text="🔍 Найденные совпадения (Топ-5)",
+                                      bg='#ecf0f1', font=("Arial", 10, "bold"))
+        matches_frame.pack(fill=tk.X, padx=15, pady=5)
+
+        selected_match = tk.StringVar(value="")
+
+        if top5:
+            for i, c in enumerate(top5):
+                label_text = (
+                    f"[{c['combined']}%] {c['detail_name']} | "
+                    f"{c['order_customer']} | Заказ: {c['order_name']} | "
+                    f"Нужно: {c['required_qty']} | Погнуто: {c['bent_qty']}"
+                )
+                rb = tk.Radiobutton(
+                    matches_frame, text=label_text,
+                    variable=selected_match, value=str(i),
+                    bg='#ecf0f1', font=("Arial", 9), anchor='w', wraplength=720
+                )
+                rb.pack(fill=tk.X, padx=10, pady=1)
+        else:
+            tk.Label(matches_frame, text="Совпадения не найдены. Используйте ручной выбор.",
+                     bg='#ecf0f1', font=("Arial", 9), fg='#e74c3c').pack(padx=10, pady=5)
+
+        # Ручной выбор
+        manual_frame = tk.LabelFrame(dialog, text="✏️ Ручной выбор",
+                                     bg='#ecf0f1', font=("Arial", 10, "bold"))
+        manual_frame.pack(fill=tk.X, padx=15, pady=5)
+
+        def _row(parent, label, widget_factory):
+            f = tk.Frame(parent, bg='#ecf0f1')
+            f.pack(fill=tk.X, padx=10, pady=3)
+            tk.Label(f, text=label, width=16, anchor='w', bg='#ecf0f1',
+                     font=("Arial", 10)).pack(side=tk.LEFT)
+            w = widget_factory(f)
+            w.pack(side=tk.LEFT, padx=5)
+            return w
+
+        order_names = [""] + (list(orders_df["Название заказа"].astype(str)) if not orders_df.empty else [])
+        order_var = tk.StringVar()
+        order_combo = _row(manual_frame, "Заказ:",
+                           lambda f: ttk.Combobox(f, textvariable=order_var, values=order_names, width=48))
+
+        detail_var = tk.StringVar()
+        detail_combo = _row(manual_frame, "Деталь:",
+                            lambda f: ttk.Combobox(f, textvariable=detail_var, values=[], width=48))
+
+        qty_var = tk.StringVar(value=quantity)
+        _row(manual_frame, "Количество:", lambda f: tk.Entry(f, textvariable=qty_var, width=15, font=("Arial", 10)))
+
+        comment_var = tk.StringVar()
+        _row(manual_frame, "Комментарий:", lambda f: tk.Entry(f, textvariable=comment_var, width=40, font=("Arial", 10)))
+
+        def on_order_selected(event=None):
+            sel = order_var.get()
+            if not sel or orders_df.empty:
+                detail_combo['values'] = []
+                return
+            om = orders_df[orders_df["Название заказа"] == sel]
+            if om.empty:
+                detail_combo['values'] = []
+                return
+            oid = int(om.iloc[0]["ID заказа"])
+            dets = order_details_df[order_details_df["ID заказа"] == oid]
+            detail_combo['values'] = list(dets["Название детали"].astype(str))
+
+        order_combo.bind("<<ComboboxSelected>>", on_order_selected)
+        order_combo.bind("<Return>", on_order_selected)
+
+        def apply_match():
+            idx_str = selected_match.get()
+            if not idx_str:
+                return
+            idx = int(idx_str)
+            if idx < len(top5):
+                c = top5[idx]
+                order_var.set(c["order_name"])
+                on_order_selected()
+                detail_var.set(c["detail_name"])
+
+        if top5:
+            tk.Button(matches_frame, text="↓ Применить выбранное совпадение",
+                      bg='#3498db', fg='white', font=("Arial", 9, "bold"),
+                      command=apply_match).pack(padx=10, pady=4)
+
+        def do_writeoff():
+            order_name_sel = order_var.get().strip()
+            if not order_name_sel and selected_match.get():
+                apply_match()
+                order_name_sel = order_var.get().strip()
+
+            if not order_name_sel:
+                messagebox.showwarning("Предупреждение", "Выберите заказ!", parent=dialog)
+                return
+
+            try:
+                qty = int(float(qty_var.get().strip()))
+                if qty <= 0:
+                    raise ValueError
+            except Exception:
+                messagebox.showwarning("Предупреждение", "Введите корректное количество!", parent=dialog)
+                return
+
+            om = orders_df[orders_df["Название заказа"] == order_name_sel]
+            if om.empty:
+                messagebox.showerror("Ошибка", f"Заказ '{order_name_sel}' не найден!", parent=dialog)
+                return
+            order_id = int(om.iloc[0]["ID заказа"])
+
+            detail_name_sel = detail_var.get().strip()
+            detail_id = None
+            if detail_name_sel and not order_details_df.empty:
+                dm = order_details_df[
+                    (order_details_df["ID заказа"] == order_id) &
+                    (order_details_df["Название детали"] == detail_name_sel)
+                ]
+                if not dm.empty:
+                    detail_id = int(dm.iloc[0]["ID"])
+
+            try:
+                self._perform_bending_writeoff(
+                    item_index=item_index,
+                    row_data=row_data,
+                    order_id=order_id,
+                    order_name=order_name_sel,
+                    detail_id=detail_id,
+                    detail_name=detail_name_sel or part_name,
+                    quantity=qty,
+                    writeoff_type="авто",
+                    comment=comment_var.get().strip()
+                )
+                dialog.destroy()
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Ошибка списания:\n{e}", parent=dialog)
+                import traceback
+                traceback.print_exc()
+
+        btn_frame = tk.Frame(dialog, bg='#ecf0f1')
+        btn_frame.pack(pady=15)
+        tk.Button(btn_frame, text="✅ Списать", bg='#27ae60', fg='white',
+                  font=("Arial", 12, "bold"), width=14, command=do_writeoff).pack(side=tk.LEFT, padx=8)
+        tk.Button(btn_frame, text="⏭ Пропустить", bg='#f39c12', fg='white',
+                  font=("Arial", 12, "bold"), width=14, command=dialog.destroy).pack(side=tk.LEFT, padx=8)
+        tk.Button(btn_frame, text="❌ Отмена", bg='#e74c3c', fg='white',
+                  font=("Arial", 12, "bold"), width=14, command=dialog.destroy).pack(side=tk.LEFT, padx=8)
+
+    def _perform_bending_writeoff(self, item_index, row_data, order_id, order_name,
+                                   detail_id, detail_name, quantity, writeoff_type, comment=""):
+        """Выполнить списание гибки: записать в BendingWriteOffs и обновить Погнуто"""
+        try:
+            bwo_df = load_data("BendingWriteOffs")
+        except Exception:
+            bwo_df = pd.DataFrame()
+
+        _bwo_cols = ["ID списания", "ID импорта гибки", "ID заказа", "ID детали",
+                     "Название детали", "Количество", "Дата списания", "Оператор", "Комментарий", "Тип"]
+        if bwo_df.empty or not all(c in bwo_df.columns for c in _bwo_cols):
+            bwo_df = pd.DataFrame(columns=_bwo_cols)
+
+        import_key = "|".join([
+            str(row_data.get("Дата (МСК)", "")),
+            str(row_data.get("Время (МСК)", "")),
+            str(row_data.get("Оператор", "")),
+            str(row_data.get("Название детали", "")),
+            str(row_data.get("Количество", ""))
+        ])
+
+        new_id = 1 if bwo_df.empty else int(bwo_df["ID списания"].max()) + 1
+        new_entry = pd.DataFrame([{
+            "ID списания": new_id,
+            "ID импорта гибки": import_key,
+            "ID заказа": order_id,
+            "ID детали": detail_id if detail_id is not None else "",
+            "Название детали": detail_name,
+            "Количество": quantity,
+            "Дата списания": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "Оператор": str(row_data.get("Оператор", "")),
+            "Комментарий": comment,
+            "Тип": writeoff_type
+        }])
+
+        bwo_df = pd.concat([bwo_df, new_entry], ignore_index=True)
+        save_data("BendingWriteOffs", bwo_df)
+
+        # Обновляем "Погнуто" в OrderDetails
+        if detail_id is not None:
+            try:
+                od_df = load_data("OrderDetails")
+                if not od_df.empty:
+                    if "Погнуто" not in od_df.columns:
+                        od_df["Погнуто"] = 0
+                    mask = od_df["ID"] == detail_id
+                    if mask.any():
+                        old_val = od_df.loc[mask, "Погнуто"].iloc[0]
+                        old_val = int(old_val) if pd.notna(old_val) else 0
+                        od_df.loc[mask, "Погнуто"] = old_val + quantity
+                        save_data("OrderDetails", od_df)
+                        print(f"✅ Погнуто обновлено: {old_val} → {old_val + quantity} (деталь ID={detail_id})")
+            except Exception as e:
+                print(f"⚠️ Ошибка обновления Погнуто: {e}")
+
+        # Помечаем строку как списанную
+        self.bending_table_data[item_index]["Списано"] = "✓"
+        self.bending_table_data[item_index]["Дата списания"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+        self.bending_table_data[item_index]["Связанный заказ"] = order_name
+
+        self.refresh_bending_import_table()
+        self.save_bending_import_cache()
+
+        if hasattr(self, 'refresh_details'):
+            self.refresh_details()
+        if hasattr(self, 'refresh_orders'):
+            self.refresh_orders()
+
+        messagebox.showinfo("Успех",
+            f"✅ Деталь '{detail_name}' списана!\n"
+            f"Заказ: {order_name}\n"
+            f"Количество: {quantity} шт\n"
+            f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        )
+
+    def bending_mark_manual_writeoff(self):
+        """Ручная пометка деталей как погнутых без привязки к заказу"""
+        selected_items = self.bending_import_tree.selection()
+        if not selected_items:
+            messagebox.showwarning("Предупреждение", "Выберите строки для пометки!")
+            return
+
+        rows_to_mark = []
+        for item in selected_items:
+            values = self.bending_import_tree.item(item)['values']
+            status = str(values[11]).strip() if len(values) > 11 else ""
+            if not status.startswith("✓"):
+                rows_to_mark.append(item)
+
+        if not rows_to_mark:
+            messagebox.showwarning("Предупреждение", "Все выбранные строки уже списаны!")
+            return
+
+        # Для одной строки показываем диалог с подтверждением и комментарием
+        if len(rows_to_mark) == 1:
+            item = rows_to_mark[0]
+            item_index = self.bending_import_tree.index(item)
+            if item_index >= len(self.bending_table_data):
+                return
+            row_data = self.bending_table_data[item_index]
+            part_name = str(row_data.get("Название детали", ""))
+            quantity = str(row_data.get("Количество", ""))
+            operator = str(row_data.get("Оператор", ""))
+
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Ручная пометка списания")
+            dialog.geometry("480x280")
+            dialog.configure(bg='#ecf0f1')
+            dialog.grab_set()
+
+            tk.Label(dialog, text="Пометить деталь как погнутую без привязки к заказу?",
+                     font=("Arial", 11, "bold"), bg='#ecf0f1', wraplength=420).pack(pady=10)
+            info = f"Деталь: {part_name}\nКоличество: {quantity} шт\nОператор: {operator}"
+            tk.Label(dialog, text=info, font=("Arial", 10), bg='#ecf0f1').pack(pady=5)
+
+            tk.Label(dialog, text="Комментарий:", font=("Arial", 10), bg='#ecf0f1').pack()
+            comment_var = tk.StringVar()
+            tk.Entry(dialog, textvariable=comment_var, width=45, font=("Arial", 10)).pack(pady=5)
+
+            def do_mark_single():
+                self.bending_table_data[item_index]["Списано"] = "✓ (вручную)"
+                self.bending_table_data[item_index]["Дата списания"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                self.bending_table_data[item_index]["Связанный заказ"] = ""
+                # Журналируем
+                self._log_bending_manual_writeoff(row_data, comment_var.get().strip())
+                self.refresh_bending_import_table()
+                self.save_bending_import_cache()
+                dialog.destroy()
+                messagebox.showinfo("Успех", f"✅ Деталь '{part_name}' помечена как списанная вручную.")
+
+            bf = tk.Frame(dialog, bg='#ecf0f1')
+            bf.pack(pady=15)
+            tk.Button(bf, text="✅ Подтвердить", bg='#27ae60', fg='white',
+                      font=("Arial", 11, "bold"), command=do_mark_single).pack(side=tk.LEFT, padx=10)
+            tk.Button(bf, text="❌ Отмена", bg='#e74c3c', fg='white',
+                      font=("Arial", 11, "bold"), command=dialog.destroy).pack(side=tk.LEFT, padx=10)
+            return
+
+        # Несколько строк — массовая пометка
+        if not messagebox.askyesno("Подтверждение",
+                f"Пометить {len(rows_to_mark)} деталей как '✓ (вручную)' без привязки к заказу?"):
+            return
+
+        marked = 0
+        for item in rows_to_mark:
+            item_index = self.bending_import_tree.index(item)
+            if item_index < len(self.bending_table_data):
+                row_data = self.bending_table_data[item_index]
+                self.bending_table_data[item_index]["Списано"] = "✓ (вручную)"
+                self.bending_table_data[item_index]["Дата списания"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                self.bending_table_data[item_index]["Связанный заказ"] = ""
+                self._log_bending_manual_writeoff(row_data, "")
+                marked += 1
+
+        self.refresh_bending_import_table()
+        self.save_bending_import_cache()
+        messagebox.showinfo("Успех", f"✅ Помечено {marked} строк(и)")
+
+    def _log_bending_manual_writeoff(self, row_data, comment):
+        """Записать ручное списание в BendingWriteOffs"""
+        try:
+            bwo_df = load_data("BendingWriteOffs")
+        except Exception:
+            bwo_df = pd.DataFrame()
+
+        _bwo_cols = ["ID списания", "ID импорта гибки", "ID заказа", "ID детали",
+                     "Название детали", "Количество", "Дата списания", "Оператор", "Комментарий", "Тип"]
+        if bwo_df.empty or not all(c in bwo_df.columns for c in _bwo_cols):
+            bwo_df = pd.DataFrame(columns=_bwo_cols)
+
+        import_key = "|".join([
+            str(row_data.get("Дата (МСК)", "")),
+            str(row_data.get("Время (МСК)", "")),
+            str(row_data.get("Оператор", "")),
+            str(row_data.get("Название детали", "")),
+            str(row_data.get("Количество", ""))
+        ])
+
+        new_id = 1 if bwo_df.empty else int(bwo_df["ID списания"].max()) + 1
+        new_entry = pd.DataFrame([{
+            "ID списания": new_id,
+            "ID импорта гибки": import_key,
+            "ID заказа": "",
+            "ID детали": "",
+            "Название детали": str(row_data.get("Название детали", "")),
+            "Количество": str(row_data.get("Количество", "")),
+            "Дата списания": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "Оператор": str(row_data.get("Оператор", "")),
+            "Комментарий": comment,
+            "Тип": "ручной"
+        }])
+        bwo_df = pd.concat([bwo_df, new_entry], ignore_index=True)
+        save_data("BendingWriteOffs", bwo_df)
+
+    def bending_unmark_writeoff(self):
+        """Отменить списание гибки: восстановить Погнуто и удалить запись"""
+        selected_items = self.bending_import_tree.selection()
+        if not selected_items:
+            messagebox.showwarning("Предупреждение", "Выберите строки для отмены списания!")
+            return
+
+        rows_to_unmark = []
+        for item in selected_items:
+            values = self.bending_import_tree.item(item)['values']
+            status = str(values[11]).strip() if len(values) > 11 else ""
+            if status.startswith("✓"):
+                rows_to_unmark.append(item)
+
+        if not rows_to_unmark:
+            messagebox.showwarning("Предупреждение", "Нет списанных строк для отмены!")
+            return
+
+        if not messagebox.askyesno("Подтверждение",
+                f"Отменить списание {len(rows_to_unmark)} строк(и)?\n\n"
+                "⚠️ Это уменьшит 'Погнуто' в заказе и удалит запись из журнала."):
+            return
+
+        try:
+            bwo_df = load_data("BendingWriteOffs")
+        except Exception:
+            bwo_df = pd.DataFrame()
+
+        for item in rows_to_unmark:
+            item_index = self.bending_import_tree.index(item)
+            if item_index >= len(self.bending_table_data):
+                continue
+            row_data = self.bending_table_data[item_index]
+            import_key = "|".join([
+                str(row_data.get("Дата (МСК)", "")),
+                str(row_data.get("Время (МСК)", "")),
+                str(row_data.get("Оператор", "")),
+                str(row_data.get("Название детали", "")),
+                str(row_data.get("Количество", ""))
+            ])
+
+            if not bwo_df.empty and "ID импорта гибки" in bwo_df.columns:
+                matching = bwo_df[bwo_df["ID импорта гибки"] == import_key]
+                for _, wo_row in matching.iterrows():
+                    detail_id_raw = wo_row.get("ID детали", "")
+                    wo_qty = wo_row.get("Количество", 0)
+                    if str(detail_id_raw).strip() not in ("", "nan", "None"):
+                        try:
+                            od_df = load_data("OrderDetails")
+                            did = int(float(detail_id_raw))
+                            if "Погнуто" in od_df.columns:
+                                mask = od_df["ID"] == did
+                                if mask.any():
+                                    old_val = od_df.loc[mask, "Погнуто"].iloc[0]
+                                    old_val = int(old_val) if pd.notna(old_val) else 0
+                                    new_val = max(0, old_val - int(float(wo_qty)))
+                                    od_df.loc[mask, "Погнуто"] = new_val
+                                    save_data("OrderDetails", od_df)
+                                    print(f"✅ Погнуто восстановлено: {old_val} → {new_val}")
+                        except Exception as e:
+                            print(f"⚠️ Ошибка восстановления Погнуто: {e}")
+
+                bwo_df = bwo_df[bwo_df["ID импорта гибки"] != import_key]
+
+            self.bending_table_data[item_index]["Списано"] = ""
+            self.bending_table_data[item_index]["Дата списания"] = ""
+            self.bending_table_data[item_index]["Связанный заказ"] = ""
+
+        if not bwo_df.empty:
+            save_data("BendingWriteOffs", bwo_df)
+
+        self.refresh_bending_import_table()
+        self.save_bending_import_cache()
+
+        if hasattr(self, 'refresh_details'):
+            self.refresh_details()
+        if hasattr(self, 'refresh_orders'):
+            self.refresh_orders()
+
+        messagebox.showinfo("Успех", f"✅ Отменено списаний: {len(rows_to_unmark)}")
+
+    def bending_delete_row(self):
+        """Удаление выбранных строк из таблицы гибщиков"""
+        selected_items = self.bending_import_tree.selection()
+        if not selected_items:
+            messagebox.showwarning("Предупреждение", "Выберите строки для удаления!")
+            return
+        if not messagebox.askyesno("Подтверждение",
+                f"Удалить выбранные строки ({len(selected_items)} шт)?"):
+            return
+        indices = sorted([self.bending_import_tree.index(i) for i in selected_items], reverse=True)
+        for index in indices:
+            del self.bending_table_data[index]
+        self.refresh_bending_import_table()
+        self.save_bending_import_cache()
+        messagebox.showinfo("Успех", f"Удалено записей: {len(indices)}")
+
+    def bending_export_table(self):
+        """Экспорт таблицы гибщиков в Excel"""
+        if not self.bending_table_data:
+            messagebox.showwarning("Предупреждение", "Нет данных для экспорта!")
+            return
+        file_path = filedialog.asksaveasfilename(
+            title="Сохранить таблицу гибщиков",
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile=f"bending_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        )
+        if not file_path:
+            return
+        try:
+            df = pd.DataFrame(self.bending_table_data)
+            for col in ['_sort_order', '_item_id', '_datetime_sort']:
+                if col in df.columns:
+                    df = df.drop(col, axis=1)
+            if file_path.lower().endswith('.csv'):
+                df.to_csv(file_path, index=False, sep=';', encoding='utf-8')
+            else:
+                df.to_excel(file_path, index=False, engine='openpyxl')
+            messagebox.showinfo("Успех", f"Таблица сохранена:\n{file_path}")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
+
+    def save_bending_import_cache(self):
+        """Автоматическое сохранение таблицы гибщиков в кэш-файл"""
+        if not hasattr(self, 'bending_table_data') or not self.bending_table_data:
+            return
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            cache_file = os.path.join(script_dir, "bending_import_cache.xlsx")
+            df = pd.DataFrame(self.bending_table_data)
+            for col in ['_sort_order', '_item_id', '_datetime_sort']:
+                if col in df.columns:
+                    df = df.drop(col, axis=1)
+            df.to_excel(cache_file, index=False, engine='openpyxl')
+            print(f"✅ Кэш гибщиков сохранён: {len(self.bending_table_data)} записей → {cache_file}")
+        except Exception as e:
+            print(f"⚠️ Ошибка сохранения кэша гибщиков: {e}")
+
+    def load_bending_import_cache(self):
+        """Автоматическая загрузка таблицы гибщиков из кэш-файла"""
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            cache_file = os.path.join(script_dir, "bending_import_cache.xlsx")
+
+            if not os.path.exists(cache_file):
+                print(f"ℹ️ Кэш гибщиков не найден: {cache_file}")
+                return
+
+            df = pd.read_excel(cache_file, engine='openpyxl')
+
+            if df.empty:
+                print("ℹ️ Кэш гибщиков пуст")
+                return
+
+            required = ["Дата (МСК)", "Время (МСК)", "Оператор", "Заказчик", "Название детали", "Количество"]
+            if not all(col in df.columns for col in required):
+                print("⚠️ Кэш гибщиков имеет неправильную структуру")
+                return
+
+            df = df.fillna("")
+
+            try:
+                df['_datetime_sort'] = pd.to_datetime(
+                    df['Дата (МСК)'].astype(str) + ' ' + df['Время (МСК)'].astype(str),
+                    errors='coerce'
+                )
+                df = df.sort_values('_datetime_sort', ascending=False, na_position='last')
+                df = df.drop('_datetime_sort', axis=1)
+            except Exception as e:
+                print(f"⚠️ Ошибка сортировки кэша гибщиков: {e}")
+
+            self.bending_table_data = df.to_dict('records')
+
+            for row in self.bending_table_data:
+                for col in ["Списано", "Дата списания", "Связанный заказ"]:
+                    val = row.get(col, "")
+                    if val is None or (isinstance(val, float) and pd.isna(val)):
+                        row[col] = ""
+                    else:
+                        row[col] = str(val).strip()
+                        if row[col] in ('nan', 'None', 'NaN'):
+                            row[col] = ""
+
+            print(f"✅ Кэш гибщиков загружен: {len(self.bending_table_data)} записей")
+
+            if hasattr(self, 'bending_import_tree'):
+                self.refresh_bending_import_table()
+
+                if hasattr(self, 'bending_status_label'):
+                    items_count = len(self.bending_import_tree.get_children())
+                    written = sum(1 for r in self.bending_table_data
+                                  if str(r.get("Списано", "")).startswith("✓"))
+                    pending = len(self.bending_table_data) - written
+                    self.bending_status_label.config(
+                        text=f"📂 Загружено: {items_count} | ✅ Списано: {written} | ⏳ Ожидает: {pending}",
+                        bg='#d1ecf1', fg='#0c5460'
+                    )
+
+        except Exception as e:
+            print(f"⚠️ Ошибка загрузки кэша гибщиков: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 if __name__ == "__main__":
