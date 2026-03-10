@@ -5,11 +5,16 @@ import pandas as pd
 from openpyxl import Workbook, load_workbook
 from datetime import datetime, timedelta
 from pathlib import Path
+from difflib import SequenceMatcher
 import os
 import json
 
 DATABASE_FILE = "production_database.xlsx"
 DATA_PATH = Path(__file__).parent  # Папка где лежит скрипт
+
+# Веса для расчёта схожести при поиске деталей гибщиков
+BENDING_CUSTOMER_SIM_WEIGHT = 0.3
+BENDING_PART_SIM_WEIGHT = 0.7
 
 
 def initialize_database():
@@ -113,6 +118,16 @@ def save_data(sheet_name, df):
     except Exception as e:
         print(f"❌ Ошибка сохранения данных в {sheet_name}: {e}")
         messagebox.showerror("Ошибка сохранения", f"Не удалось сохранить данные: {e}")
+
+
+def _safe_str(value):
+    """Преобразует значение в строку, заменяя пустые/null значения на пустую строку"""
+    if value is None:
+        return ""
+    if isinstance(value, float) and pd.isna(value):
+        return ""
+    s = str(value).strip()
+    return "" if s in ('nan', 'None', 'NaN') else s
 
 
 class ExcelStyleFilter:
@@ -9071,12 +9086,9 @@ class ProductionApp:
             scrap = str(row_data.get("Количество брака", ""))
             action_type = str(row_data.get("Тип действия", ""))
             status = str(row_data.get("Статус", ""))
-            written_off = str(row_data.get("Списано", "")).strip()
+            written_off = _safe_str(row_data.get("Списано", ""))
             writeoff_date = str(row_data.get("Дата списания", ""))
             linked_order = str(row_data.get("Связанный заказ", ""))
-
-            if written_off in ('nan', 'None', 'NaN'):
-                written_off = ""
 
             values = (date_val, time_val, operator, customer, material, thickness,
                       part_name, quantity, scrap, action_type, status,
@@ -9091,7 +9103,8 @@ class ProductionApp:
                 cancelled_count += 1
             else:
                 try:
-                    scrap_qty = float(scrap) if scrap and scrap not in ('', 'nan', 'None', 'NaN') else 0
+                    scrap_clean = _safe_str(scrap)
+                    scrap_qty = float(scrap_clean) if scrap_clean else 0
                 except Exception:
                     scrap_qty = 0
                 if scrap_qty > 0:
@@ -9355,7 +9368,6 @@ class ProductionApp:
     @staticmethod
     def bending_similarity(a, b):
         """Процент схожести двух строк (0-100) по алгоритму SequenceMatcher"""
-        from difflib import SequenceMatcher
         return int(SequenceMatcher(None, str(a).lower(), str(b).lower()).ratio() * 100)
 
     def bending_writeoff_selected(self):
@@ -9418,7 +9430,7 @@ class ProductionApp:
                 for _, detail_row in details.iterrows():
                     detail_name = str(detail_row.get("Название детали", ""))
                     part_sim = self.bending_similarity(part_name, detail_name)
-                    combined = int(customer_sim * 0.3 + part_sim * 0.7)
+                    combined = int(customer_sim * BENDING_CUSTOMER_SIM_WEIGHT + part_sim * BENDING_PART_SIM_WEIGHT)
                     bent_raw = detail_row.get("Погнуто", 0)
                     bent_qty = int(bent_raw) if pd.notna(bent_raw) else 0
                     candidates.append({
@@ -9975,13 +9987,7 @@ class ProductionApp:
 
             for row in self.bending_table_data:
                 for col in ["Списано", "Дата списания", "Связанный заказ"]:
-                    val = row.get(col, "")
-                    if val is None or (isinstance(val, float) and pd.isna(val)):
-                        row[col] = ""
-                    else:
-                        row[col] = str(val).strip()
-                        if row[col] in ('nan', 'None', 'NaN'):
-                            row[col] = ""
+                    row[col] = _safe_str(row.get(col, ""))
 
             print(f"✅ Кэш гибщиков загружен: {len(self.bending_table_data)} записей")
 
