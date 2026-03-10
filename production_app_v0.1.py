@@ -9665,6 +9665,8 @@ class ProductionApp:
 
             detail_name_sel = detail_var.get().strip()
             detail_id = None
+            required_qty = 0
+            already_bent = 0
             if detail_name_sel and not order_details_df.empty:
                 dm = order_details_df[
                     (order_details_df["ID заказа"] == order_id) &
@@ -9672,6 +9674,110 @@ class ProductionApp:
                 ]
                 if not dm.empty:
                     detail_id = int(dm.iloc[0]["ID"])
+                    req_raw = dm.iloc[0].get("Количество", 0)
+                    required_qty = int(req_raw) if pd.notna(req_raw) else 0
+                    bent_raw = dm.iloc[0].get("Погнуто", 0)
+                    already_bent = int(bent_raw) if pd.notna(bent_raw) else 0
+
+            remaining_to_bend = max(0, required_qty - already_bent)
+
+            # Проверяем, превышает ли количество потребность заказа
+            if detail_id is not None and required_qty > 0 and qty > remaining_to_bend:
+                excess = qty - remaining_to_bend
+                comment_text = comment_var.get().strip()
+
+                excess_dialog = tk.Toplevel(dialog)
+                excess_dialog.title("Превышение количества")
+                excess_dialog.geometry("560x320")
+                excess_dialog.configure(bg='#ecf0f1')
+                excess_dialog.grab_set()
+
+                tk.Label(excess_dialog, text="⚠️ Количество превышает потребность заказа",
+                         font=("Arial", 13, "bold"), bg='#ecf0f1', fg='#e74c3c').pack(pady=12)
+
+                if remaining_to_bend == 0:
+                    status_note = "⚠️ Заказ уже полностью выполнен — весь объём является излишком."
+                else:
+                    status_note = f"Осталось погнуть по заказу: {remaining_to_bend} шт"
+                info_text = (
+                    f"Деталь: {detail_name_sel or part_name}\n"
+                    f"Заказ: {order_name_sel}\n"
+                    f"Потребность заказа: {required_qty} шт  (уже погнуто: {already_bent} шт)\n"
+                    f"{status_note}\n"
+                    f"Вы вводите: {qty} шт\n"
+                    f"Излишек: {excess} шт"
+                )
+                tk.Label(excess_dialog, text=info_text, bg='#ecf0f1', font=("Arial", 10),
+                         justify=tk.LEFT).pack(padx=20, pady=5)
+
+                def write_all_to_order():
+                    try:
+                        self._perform_bending_writeoff(
+                            item_index=item_index,
+                            row_data=row_data,
+                            order_id=order_id,
+                            order_name=order_name_sel,
+                            detail_id=detail_id,
+                            detail_name=detail_name_sel or part_name,
+                            quantity=qty,
+                            writeoff_type="авто",
+                            comment=comment_text
+                        )
+                        excess_dialog.destroy()
+                        dialog.destroy()
+                    except Exception as e:
+                        messagebox.showerror("Ошибка", f"Ошибка списания:\n{e}", parent=excess_dialog)
+                        import traceback
+                        traceback.print_exc()
+
+                def distribute_remainder():
+                    try:
+                        if remaining_to_bend > 0:
+                            self._perform_bending_writeoff(
+                                item_index=item_index,
+                                row_data=row_data,
+                                order_id=order_id,
+                                order_name=order_name_sel,
+                                detail_id=detail_id,
+                                detail_name=detail_name_sel or part_name,
+                                quantity=remaining_to_bend,
+                                writeoff_type="авто",
+                                comment=comment_text,
+                                mark_done=False
+                            )
+                    except Exception as e:
+                        messagebox.showerror("Ошибка", f"Ошибка первичного списания:\n{e}",
+                                             parent=excess_dialog)
+                        return
+                    excess_dialog.destroy()
+                    dialog.destroy()
+                    self._show_bending_remainder_dialog(
+                        item_index=item_index,
+                        row_data=row_data,
+                        remainder_qty=excess,
+                        first_order_name=order_name_sel if remaining_to_bend > 0 else "",
+                        comment=comment_text
+                    )
+
+                btn_ex = tk.Frame(excess_dialog, bg='#ecf0f1')
+                btn_ex.pack(pady=10)
+                tk.Button(btn_ex,
+                          text=f"✅ Списать всё на этот заказ ({qty} шт)",
+                          bg='#27ae60', fg='white', font=("Arial", 10, "bold"),
+                          command=write_all_to_order).pack(fill=tk.X, padx=20, pady=4)
+                distribute_btn_text = (
+                    f"📦 Распределить весь объём ({excess} шт) по другим заказам"
+                    if remaining_to_bend == 0
+                    else f"📦 Списать {remaining_to_bend} шт на этот заказ, остаток ({excess} шт) распределить"
+                )
+                tk.Button(btn_ex,
+                          text=distribute_btn_text,
+                          bg='#3498db', fg='white', font=("Arial", 10, "bold"),
+                          command=distribute_remainder).pack(fill=tk.X, padx=20, pady=4)
+                tk.Button(btn_ex, text="❌ Отмена",
+                          bg='#e74c3c', fg='white', font=("Arial", 10, "bold"),
+                          command=excess_dialog.destroy).pack(fill=tk.X, padx=20, pady=4)
+                return
 
             try:
                 self._perform_bending_writeoff(
@@ -9701,8 +9807,10 @@ class ProductionApp:
                   font=("Arial", 12, "bold"), width=14, command=dialog.destroy).pack(side=tk.LEFT, padx=8)
 
     def _perform_bending_writeoff(self, item_index, row_data, order_id, order_name,
-                                   detail_id, detail_name, quantity, writeoff_type, comment=""):
-        """Выполнить списание гибки: записать в BendingWriteOffs и обновить Погнуто"""
+                                   detail_id, detail_name, quantity, writeoff_type, comment="",
+                                   mark_done=True):
+        """Выполнить списание гибки: записать в BendingWriteOffs и обновить Погнуто.
+        mark_done=False используется при частичном списании (остаток будет распределён позже)."""
         try:
             bwo_df = load_data("BendingWriteOffs")
         except Exception:
@@ -9755,25 +9863,298 @@ class ProductionApp:
             except Exception as e:
                 print(f"⚠️ Ошибка обновления Погнуто: {e}")
 
-        # Помечаем строку как списанную
-        self.bending_table_data[item_index]["Списано"] = "✓"
-        self.bending_table_data[item_index]["Дата списания"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-        self.bending_table_data[item_index]["Связанный заказ"] = order_name
+        if mark_done:
+            # Помечаем строку как списанную
+            self.bending_table_data[item_index]["Списано"] = "✓"
+            self.bending_table_data[item_index]["Дата списания"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+            self.bending_table_data[item_index]["Связанный заказ"] = order_name
 
-        self.refresh_bending_import_table()
-        self.save_bending_import_cache()
+            self.refresh_bending_import_table()
+            self.save_bending_import_cache()
 
-        if hasattr(self, 'refresh_details'):
-            self.refresh_details()
-        if hasattr(self, 'refresh_orders'):
-            self.refresh_orders()
+            if hasattr(self, 'refresh_details'):
+                self.refresh_details()
+            if hasattr(self, 'refresh_orders'):
+                self.refresh_orders()
 
-        messagebox.showinfo("Успех",
-            f"✅ Деталь '{detail_name}' списана!\n"
-            f"Заказ: {order_name}\n"
-            f"Количество: {quantity} шт\n"
-            f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-        )
+            messagebox.showinfo("Успех",
+                f"✅ Деталь '{detail_name}' списана!\n"
+                f"Заказ: {order_name}\n"
+                f"Количество: {quantity} шт\n"
+                f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            )
+
+    def _show_bending_remainder_dialog(self, item_index, row_data, remainder_qty,
+                                        first_order_name, comment=""):
+        """Диалог распределения излишка по заказам после частичного списания гибки."""
+        try:
+            orders_df = load_data("Orders")
+            order_details_df = load_data("OrderDetails")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось загрузить данные:\n{e}")
+            return
+
+        if orders_df.empty:
+            messagebox.showwarning("Предупреждение",
+                                   "Нет доступных заказов для распределения остатка.")
+            return
+
+        order_names = list(orders_df["Название заказа"].astype(str))
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Распределение излишка по заказам")
+        dialog.geometry("820x560")
+        dialog.configure(bg='#ecf0f1')
+        dialog.grab_set()
+
+        tk.Label(dialog, text="📦 Распределение излишка по заказам",
+                 font=("Arial", 14, "bold"), bg='#ecf0f1', fg='#3498db').pack(pady=10)
+
+        info_frame = tk.LabelFrame(dialog, text="ℹ️ Информация",
+                                   bg='#d5e8d4', font=("Arial", 10, "bold"))
+        info_frame.pack(fill=tk.X, padx=15, pady=5)
+
+        remaining_label = tk.Label(info_frame, text="", bg='#d5e8d4',
+                                   font=("Arial", 10, "bold"), fg='#e74c3c')
+        remaining_label.pack(padx=10, pady=6)
+
+        distribution_rows = []  # list of (order_var, detail_var, qty_var, row_frame)
+
+        def update_remaining_label():
+            total = 0
+            for order_v, detail_v, qty_v, _ in distribution_rows:
+                try:
+                    total += int(float(qty_v.get() or 0))
+                except ValueError:
+                    pass
+            unassigned = remainder_qty - total
+            remaining_label.config(
+                text=(f"Остаток к распределению: {remainder_qty} шт  |  "
+                      f"Назначено: {total} шт  |  "
+                      f"Не назначено: {unassigned} шт"),
+                fg='#27ae60' if unassigned == 0 else '#e74c3c'
+            )
+
+        # Область со строками распределения (с прокруткой)
+        canvas_frame = tk.Frame(dialog, bg='#ecf0f1')
+        canvas_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=3)
+
+        canvas = tk.Canvas(canvas_frame, bg='#ecf0f1', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        rows_container = tk.Frame(canvas, bg='#ecf0f1')
+        canvas_window = canvas.create_window((0, 0), window=rows_container, anchor='nw')
+
+        def _on_rows_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfig(canvas_window, width=canvas.winfo_width())
+
+        rows_container.bind("<Configure>", _on_rows_configure)
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_window,
+                                                                width=canvas.winfo_width()))
+
+        # Заголовки таблицы
+        hdr = tk.Frame(rows_container, bg='#bdc3c7')
+        hdr.pack(fill=tk.X, pady=(0, 2))
+        tk.Label(hdr, text="Заказ", width=28, bg='#bdc3c7',
+                 font=("Arial", 9, "bold"), anchor='w').pack(side=tk.LEFT, padx=2)
+        tk.Label(hdr, text="Деталь", width=24, bg='#bdc3c7',
+                 font=("Arial", 9, "bold"), anchor='w').pack(side=tk.LEFT, padx=2)
+        tk.Label(hdr, text="Количество", width=10, bg='#bdc3c7',
+                 font=("Arial", 9, "bold"), anchor='w').pack(side=tk.LEFT, padx=2)
+        tk.Label(hdr, text="", width=4, bg='#bdc3c7').pack(side=tk.LEFT)
+
+        def add_row(order_default="", detail_default="", qty_default=""):
+            rf = tk.Frame(rows_container, bg='#ecf0f1', pady=2)
+            rf.pack(fill=tk.X)
+
+            order_var = tk.StringVar(value=order_default)
+            detail_var = tk.StringVar(value=detail_default)
+            qty_var = tk.StringVar(value=qty_default)
+
+            order_combo = ttk.Combobox(rf, textvariable=order_var,
+                                       values=order_names, width=27)
+            order_combo.pack(side=tk.LEFT, padx=2)
+
+            detail_combo = ttk.Combobox(rf, textvariable=detail_var,
+                                        values=[], width=23)
+            detail_combo.pack(side=tk.LEFT, padx=2)
+
+            qty_entry = tk.Entry(rf, textvariable=qty_var, width=10,
+                                 font=("Arial", 10))
+            qty_entry.pack(side=tk.LEFT, padx=2)
+
+            def on_order_change(event=None):
+                sel = order_var.get()
+                if not sel or orders_df.empty:
+                    detail_combo['values'] = []
+                    return
+                om = orders_df[orders_df["Название заказа"] == sel]
+                if om.empty:
+                    detail_combo['values'] = []
+                    return
+                oid = int(om.iloc[0]["ID заказа"])
+                dets = order_details_df[order_details_df["ID заказа"] == oid]
+                detail_combo['values'] = list(dets["Название детали"].astype(str))
+
+            order_combo.bind("<<ComboboxSelected>>", on_order_change)
+            qty_var.trace_add("write", lambda *_: update_remaining_label())
+
+            entry = (order_var, detail_var, qty_var, rf)
+
+            def remove_row():
+                rf.destroy()
+                distribution_rows.remove(entry)
+                update_remaining_label()
+
+            tk.Button(rf, text="✕", bg='#e74c3c', fg='white',
+                      font=("Arial", 9, "bold"), width=3,
+                      command=remove_row).pack(side=tk.LEFT, padx=2)
+
+            distribution_rows.append(entry)
+            update_remaining_label()
+
+        # Добавляем первую строку сразу
+        add_row()
+
+        # Кнопка "Добавить заказ"
+        add_btn_frame = tk.Frame(dialog, bg='#ecf0f1')
+        add_btn_frame.pack(fill=tk.X, padx=15)
+        tk.Button(add_btn_frame, text="➕ Добавить заказ",
+                  bg='#9b59b6', fg='white', font=("Arial", 10, "bold"),
+                  command=add_row).pack(side=tk.LEFT, pady=4)
+
+        def confirm_distribution():
+            if not distribution_rows:
+                messagebox.showwarning("Предупреждение",
+                                       "Добавьте хотя бы один заказ!", parent=dialog)
+                return
+
+            assignments = []
+            total_assigned = 0
+            for order_v, detail_v, qty_v, _ in distribution_rows:
+                o_name = order_v.get().strip()
+                d_name = detail_v.get().strip()
+                q_str = qty_v.get().strip()
+
+                if not o_name:
+                    messagebox.showwarning("Предупреждение",
+                                           "Выберите заказ для всех строк!", parent=dialog)
+                    return
+                try:
+                    q = int(float(q_str))
+                    if q <= 0:
+                        raise ValueError
+                except (ValueError, TypeError):
+                    messagebox.showwarning("Предупреждение",
+                                           "Введите корректное количество (> 0) для всех строк!",
+                                           parent=dialog)
+                    return
+                assignments.append((o_name, d_name, q))
+                total_assigned += q
+
+            if total_assigned != remainder_qty:
+                if not messagebox.askyesno(
+                    "Подтверждение",
+                    f"Назначено {total_assigned} шт из {remainder_qty} шт остатка.\n"
+                    + (f"⚠️ Назначено больше остатка на {total_assigned - remainder_qty} шт!"
+                       if total_assigned > remainder_qty
+                       else f"Не распределено: {remainder_qty - total_assigned} шт")
+                    + "\n\nПродолжить?",
+                    parent=dialog
+                ):
+                    return
+
+            errors = []
+            # Reload order data to get fresh values
+            try:
+                fresh_orders_df = load_data("Orders")
+                fresh_details_df = load_data("OrderDetails")
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось загрузить данные:\n{e}",
+                                     parent=dialog)
+                return
+
+            for o_name, d_name, q in assignments:
+                om = fresh_orders_df[fresh_orders_df["Название заказа"] == o_name]
+                if om.empty:
+                    errors.append(f"Заказ '{o_name}' не найден")
+                    continue
+                o_id = int(om.iloc[0]["ID заказа"])
+                d_id = None
+                if d_name and not fresh_details_df.empty:
+                    dm = fresh_details_df[
+                        (fresh_details_df["ID заказа"] == o_id) &
+                        (fresh_details_df["Название детали"] == d_name)
+                    ]
+                    if not dm.empty:
+                        d_id = int(dm.iloc[0]["ID"])
+                try:
+                    self._perform_bending_writeoff(
+                        item_index=item_index,
+                        row_data=row_data,
+                        order_id=o_id,
+                        order_name=o_name,
+                        detail_id=d_id,
+                        detail_name=d_name or str(row_data.get("Название детали", "")),
+                        quantity=q,
+                        writeoff_type="авто (остаток)",
+                        comment=comment,
+                        mark_done=False
+                    )
+                except Exception as e:
+                    errors.append(f"Ошибка при списании на '{o_name}': {e}")
+
+            if errors:
+                messagebox.showerror("Ошибки при распределении",
+                                     "\n".join(errors), parent=dialog)
+
+            # Финально помечаем строку как списанную
+            self.bending_table_data[item_index]["Списано"] = "✓"
+            self.bending_table_data[item_index]["Дата списания"] = datetime.now().strftime(
+                "%Y-%m-%d %H:%M")
+            self.bending_table_data[item_index]["Связанный заказ"] = first_order_name
+            self.refresh_bending_import_table()
+            self.save_bending_import_cache()
+            if hasattr(self, 'refresh_details'):
+                self.refresh_details()
+            if hasattr(self, 'refresh_orders'):
+                self.refresh_orders()
+
+            dialog.destroy()
+            messagebox.showinfo(
+                "Готово",
+                f"✅ Излишек распределён!\n"
+                f"Назначено: {total_assigned} шт по {len(assignments)} заказам.\n"
+                f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            )
+
+        def skip_remainder():
+            """Пропустить остаток — пометить строку как списанную без распределения."""
+            self.bending_table_data[item_index]["Списано"] = "✓"
+            self.bending_table_data[item_index]["Дата списания"] = datetime.now().strftime(
+                "%Y-%m-%d %H:%M")
+            self.bending_table_data[item_index]["Связанный заказ"] = first_order_name
+            self.refresh_bending_import_table()
+            self.save_bending_import_cache()
+            dialog.destroy()
+
+        btn_frame = tk.Frame(dialog, bg='#ecf0f1')
+        btn_frame.pack(pady=8)
+        tk.Button(btn_frame, text="✅ Распределить и закрыть",
+                  bg='#27ae60', fg='white', font=("Arial", 11, "bold"),
+                  command=confirm_distribution).pack(side=tk.LEFT, padx=8)
+        tk.Button(btn_frame, text="⏭ Пропустить остаток",
+                  bg='#f39c12', fg='white', font=("Arial", 11, "bold"),
+                  command=skip_remainder).pack(side=tk.LEFT, padx=8)
+        tk.Button(btn_frame, text="❌ Отмена",
+                  bg='#e74c3c', fg='white', font=("Arial", 11, "bold"),
+                  command=dialog.destroy).pack(side=tk.LEFT, padx=8)
+
+        update_remaining_label()
 
     def bending_mark_manual_writeoff(self):
         """Ручная пометка деталей как погнутых без привязки к заказу"""
