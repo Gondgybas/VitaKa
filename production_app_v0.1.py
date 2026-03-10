@@ -4808,20 +4808,10 @@ class ProductionApp:
 
         btn_style = {"font": ("Arial", 10), "width": 18, "height": 2}
 
-        tk.Button(buttons_frame, text="Списать материал", bg='#e67e22', fg='white',
-                  command=self.add_writeoff, **btn_style).pack(side=tk.LEFT, padx=5)
-
-        tk.Button(buttons_frame, text="Удалить списание", bg='#e74c3c', fg='white',
-                  command=self.delete_writeoff, **btn_style).pack(side=tk.LEFT, padx=5)
-
-        tk.Button(buttons_frame, text="Редактировать", bg='#f39c12', fg='white',
-                  command=self.edit_writeoff, **btn_style).pack(side=tk.LEFT, padx=5)
-
-        tk.Button(buttons_frame, text="Обновить", bg='#95a5a6', fg='white',
-                  command=self.refresh_writeoffs, **btn_style).pack(side=tk.LEFT, padx=5)
-
         tk.Button(buttons_frame, text="✖ Сбросить фильтры", bg='#e67e22', fg='white',
                   command=self.clear_writeoffs_filters, **btn_style).pack(side=tk.LEFT, padx=5)
+
+        self.writeoffs_tree.bind('<Button-3>', self.on_writeoffs_right_click)
 
         self.refresh_writeoffs()
 
@@ -4903,6 +4893,88 @@ class ProductionApp:
             if active_filters_backup and hasattr(self, 'writeoffs_excel_filter'):
                 self.writeoffs_excel_filter.active_filters = active_filters_backup
                 self.writeoffs_excel_filter.reapply_all_filters()
+
+    def on_writeoffs_right_click(self, event):
+        """Обработчик правого клика на таблице списаний"""
+        # Определяем регион клика
+        region = self.writeoffs_tree.identify_region(event.x, event.y)
+
+        # Если клик на заголовке - выходим (чтобы работал фильтр)
+        if region == "heading":
+            return
+
+        # Определяем строку под курсором
+        item = self.writeoffs_tree.identify_row(event.y)
+
+        # Если клик на строке и она не выделена - выделяем
+        if item and item not in self.writeoffs_tree.selection():
+            self.writeoffs_tree.selection_set(item)
+
+        # Показываем универсальное меню
+        self.show_writeoffs_context_menu(event)
+
+    def show_writeoffs_context_menu(self, event):
+        """Универсальное контекстное меню для таблицы списаний"""
+        selected_count = len(self.writeoffs_tree.selection())
+
+        # Создаём меню
+        context_menu = tk.Menu(self.root, tearoff=0, font=("Arial", 10))
+
+        # ========== ОПЕРАЦИИ С ВЫБРАННЫМИ СТРОКАМИ ==========
+        if selected_count > 0:
+            context_menu.add_command(
+                label=f"📊 Выбрано: {selected_count} шт",
+                state='disabled',
+                foreground='#0c5460'
+            )
+            context_menu.add_separator()
+
+            # Редактирование (только для одной строки)
+            if selected_count == 1:
+                context_menu.add_command(
+                    label="✏️  Редактировать списание",
+                    command=self.edit_writeoff,
+                )
+            else:
+                context_menu.add_command(
+                    label=f"✏️  Редактировать (только для 1 списания)",
+                    command=lambda: messagebox.showwarning(
+                        "Множественное редактирование",
+                        "Редактирование доступно только для одного списания!\n\n"
+                        f"Выбрано строк: {selected_count}\n"
+                        "Снимите выделение с лишних строк (клик на пустом месте)."
+                    ),
+                    state='disabled'
+                )
+
+            # Удаление (отмена списания)
+            delete_label = f"↩️  Отменить списание ({selected_count} шт)"
+            context_menu.add_command(
+                label=delete_label,
+                command=self.delete_writeoff
+            )
+
+            context_menu.add_separator()
+
+        # ========== ОПЕРАЦИИ ДОБАВЛЕНИЯ (ВСЕГДА ДОСТУПНЫ) ==========
+        context_menu.add_command(
+            label="➕  Списать материал",
+            command=self.add_writeoff,
+        )
+
+        context_menu.add_separator()
+
+        # ========== ДОПОЛНИТЕЛЬНЫЕ ОПЦИИ ==========
+        context_menu.add_command(
+            label="🔄  Обновить таблицу",
+            command=self.refresh_writeoffs
+        )
+
+        # Показываем меню
+        try:
+            context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            context_menu.grab_release()
 
     def add_writeoff(self):
         reservations_df = load_data("Reservations")
