@@ -9010,10 +9010,11 @@ class ProductionApp:
         )
         self.bending_import_filter_status.pack(pady=5)
 
-        # 🟢 Зелёный: списано  🔴 Красный: Отмена  🟡 Жёлтый: есть брак  ⚪ белый: обычное
-        self.bending_import_tree.tag_configure('written_off', background='#d4edda', foreground='#155724')
-        self.bending_import_tree.tag_configure('cancelled', background='#f8d7da', foreground='#721c24')
-        self.bending_import_tree.tag_configure('has_scrap', background='#fff3cd', foreground='#856404')
+        # 🟢 Зелёный: списано авто  🔵 Синий: списано вручную  🔴 Красный: Отмена  🟡 Жёлтый: есть брак  ⚪ белый: обычное
+        self.bending_import_tree.tag_configure('written_off', background='#d4edda', foreground='#000000')
+        self.bending_import_tree.tag_configure('manual', background='#bbdefb', foreground='#000000')
+        self.bending_import_tree.tag_configure('cancelled', background='#f8d7da', foreground='#000000')
+        self.bending_import_tree.tag_configure('has_scrap', background='#fff3cd', foreground='#000000')
         self.bending_import_tree.tag_configure('normal', background='white', foreground='#000000')
 
         self.bending_status_label = tk.Label(
@@ -9094,8 +9095,11 @@ class ProductionApp:
                       part_name, quantity, scrap, action_type, status,
                       written_off, writeoff_date, linked_order)
 
-            # Цветовая индикация (приоритет: списано > отмена > брак > обычное)
-            if written_off.startswith("✓"):
+            # Цветовая индикация (приоритет: ручное списание > автоматическое > отмена > брак > обычное)
+            if written_off == "✓ (вручную)":
+                tag = 'manual'
+                written_off_count += 1
+            elif written_off.startswith("✓"):
                 tag = 'written_off'
                 written_off_count += 1
             elif status.strip() == "Отмена":
@@ -9310,11 +9314,6 @@ class ProductionApp:
 
             context_menu.add_separator()
             context_menu.add_command(
-                label="📋  Копировать информацию о детали",
-                command=self._bending_copy_selected_info
-            )
-            context_menu.add_separator()
-            context_menu.add_command(
                 label=f"🗑️  Удалить строки ({selected_count} шт)",
                 command=self.bending_delete_row
             )
@@ -9330,22 +9329,6 @@ class ProductionApp:
             context_menu.tk_popup(event.x_root, event.y_root)
         finally:
             context_menu.grab_release()
-
-    def _bending_copy_selected_info(self):
-        """Копирование информации о выбранных деталях гибщиков"""
-        selected = self.bending_import_tree.selection()
-        if not selected:
-            return
-        header = "Дата | Время | Оператор | Заказчик | Деталь | Кол-во | Статус"
-        lines = [header]
-        for item in selected:
-            values = self.bending_import_tree.item(item)['values']
-            line = " | ".join([str(v) for v in values[:7]])
-            lines.append(line)
-        text = "\n".join(lines)
-        self.root.clipboard_clear()
-        self.root.clipboard_append(text)
-        messagebox.showinfo("Скопировано", f"Скопировано {len(selected)} строк(и)")
 
     def sort_bending_import_by_original_order(self):
         """Восстановление порядка сортировки таблицы гибщиков"""
