@@ -3557,54 +3557,154 @@ class ProductionApp:
             context_menu.grab_release()
 
     def add_order_detail(self):
+        """Добавление детали к заказу с автодополнением названий"""
         selected = self.orders_tree.selection()
         if not selected:
             messagebox.showwarning("Предупреждение", "Сначала выберите заказ!")
             return
+
         order_id = self.orders_tree.item(selected)["values"][0]
+
         add_window = tk.Toplevel(self.root)
         add_window.title("Добавить деталь")
-        add_window.geometry("400x300")
+        add_window.geometry("500x350")
         add_window.configure(bg='#ecf0f1')
-        tk.Label(add_window, text=f"Добавление детали к заказу #{order_id}", font=("Arial", 12, "bold"),
-                 bg='#ecf0f1').pack(pady=10)
+
+        tk.Label(add_window, text=f"Добавление детали к заказу #{order_id}",
+                 font=("Arial", 12, "bold"), bg='#ecf0f1').pack(pady=10)
+
+        # 🆕 ЗАГРУЖАЕМ ИСТОРИЮ НАЗВАНИЙ ДЕТАЛЕЙ
+        order_details_df = load_data("OrderDetails")
+        unique_detail_names = []
+
+        if not order_details_df.empty:
+            # Получаем уникальные названия деталей, сортируем по частоте использования
+            detail_counts = order_details_df["Название детали"].value_counts()
+            unique_detail_names = detail_counts.index.tolist()
+
+        print(f"📋 Загружено уникальных названий деталей: {len(unique_detail_names)}")
+
+        # ========== НАЗВАНИЕ ДЕТАЛИ С АВТОДОПОЛНЕНИЕМ ==========
         name_frame = tk.Frame(add_window, bg='#ecf0f1')
-        name_frame.pack(fill=tk.X, padx=20, pady=5)
-        tk.Label(name_frame, text="Название детали:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
-            side=tk.LEFT)
-        name_entry = tk.Entry(name_frame, font=("Arial", 10))
-        name_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+        name_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        tk.Label(name_frame, text="Название детали:", width=20, anchor='w',
+                 bg='#ecf0f1', font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+
+        # 🆕 ИСПОЛЬЗУЕМ Combobox ВМЕСТО Entry
+        name_var = tk.StringVar()
+        name_combobox = ttk.Combobox(
+            name_frame,
+            textvariable=name_var,
+            values=unique_detail_names,
+            font=("Arial", 10),
+            width=30
+        )
+        name_combobox.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=5)
+
+        # 🆕 ПОДСКАЗКА
+        hint_label = tk.Label(
+            add_window,
+            text="💡 Введите название или нажмите ▼ для выбора из истории",
+            font=("Arial", 8, "italic"),
+            bg='#d1ecf1',
+            fg='#0c5460',
+            pady=3
+        )
+        hint_label.pack(fill=tk.X, padx=20)
+
+        # 🆕 УМНАЯ ФИЛЬТРАЦИЯ ПРИ ВВОДЕ (БЕЗ АВТООТКРЫТИЯ)
+        def on_name_change(*args):
+            """Фильтрация списка при изменении текста (БЕЗ открытия выпадающего списка)"""
+            current_text = name_var.get().lower()
+
+            if not current_text:
+                # Если поле пустое - показываем все
+                name_combobox['values'] = unique_detail_names
+            else:
+                # Фильтруем по вхождению текста
+                filtered = [name for name in unique_detail_names if current_text in name.lower()]
+                name_combobox['values'] = filtered
+
+                # 🔥 НЕ ОТКРЫВАЕМ СПИСОК АВТОМАТИЧЕСКИ - пользователь сам откроет если нужно
+
+        # Отслеживаем изменения через StringVar (более плавно чем KeyRelease)
+        name_var.trace('w', on_name_change)
+
+        # ========== КОЛИЧЕСТВО ==========
         qty_frame = tk.Frame(add_window, bg='#ecf0f1')
-        qty_frame.pack(fill=tk.X, padx=20, pady=5)
-        tk.Label(qty_frame, text="Количество:", width=20, anchor='w', bg='#ecf0f1', font=("Arial", 10)).pack(
-            side=tk.LEFT)
+        qty_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        tk.Label(qty_frame, text="Количество:", width=20, anchor='w',
+                 bg='#ecf0f1', font=("Arial", 10, "bold")).pack(side=tk.LEFT)
         qty_entry = tk.Entry(qty_frame, font=("Arial", 10))
-        qty_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+        qty_entry.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=5)
+
+        # ========== ИНФОРМАЦИЯ О ПОПУЛЯРНЫХ ДЕТАЛЯХ ==========
+        if unique_detail_names:
+            info_frame = tk.LabelFrame(add_window, text="📊 Часто используемые детали",
+                                       bg='#fff3cd', font=("Arial", 9, "bold"))
+            info_frame.pack(fill=tk.X, padx=20, pady=10)
+
+            top_5 = unique_detail_names[:5]
+            for i, detail in enumerate(top_5, 1):
+                # 🆕 ДОБАВЛЯЕМ ВОЗМОЖНОСТЬ КЛИКНУТЬ НА ПОПУЛЯРНУЮ ДЕТАЛЬ
+                detail_label = tk.Label(info_frame, text=f"{i}. {detail}",
+                                        bg='#fff3cd', font=("Arial", 8),
+                                        anchor='w', cursor='hand2')
+                detail_label.pack(fill=tk.X, padx=10, pady=1)
+
+                # При клике - вставляем название в поле
+                detail_label.bind('<Button-1>', lambda e, d=detail: name_var.set(d))
 
         def save_detail():
             try:
-                detail_name = name_entry.get().strip()
+                detail_name = name_var.get().strip()
                 quantity = int(qty_entry.get().strip())
+
                 if not detail_name:
                     messagebox.showwarning("Предупреждение", "Введите название детали!")
                     return
+
+                if quantity <= 0:
+                    messagebox.showwarning("Предупреждение", "Количество должно быть больше нуля!")
+                    return
+
                 df = load_data("OrderDetails")
                 new_id = 1 if df.empty else int(df["ID"].max()) + 1
-                new_row = pd.DataFrame(
-                    [{"ID": new_id, "ID заказа": order_id, "Название детали": detail_name,
-                      "Количество": quantity, "Порезано": 0, "Погнуто": 0}])
+
+                new_row = pd.DataFrame([{
+                    "ID": new_id,
+                    "ID заказа": order_id,
+                    "Название детали": detail_name,
+                    "Количество": quantity,
+                    "Порезано": 0,
+                    "Погнуто": 0
+                }])
+
                 df = pd.concat([df, new_row], ignore_index=True)
                 save_data("OrderDetails", df)
+
                 self.refresh_order_details()
+
+                # 🆕 ОБНОВЛЯЕМ ВКЛАДКУ "УЧЁТ ДЕТАЛЕЙ"
+                if hasattr(self, 'refresh_details'):
+                    self.refresh_details()
+
                 add_window.destroy()
-                messagebox.showinfo("Успех", "Деталь добавлена!")
+                messagebox.showinfo("Успех", f"✅ Деталь '{detail_name}' добавлена!\nКоличество: {quantity} шт")
+
             except ValueError:
                 messagebox.showerror("Ошибка", "Количество должно быть числом!")
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось добавить деталь: {e}")
 
-        tk.Button(add_window, text="Добавить", bg='#27ae60', fg='white', font=("Arial", 12, "bold"),
-                  command=save_detail).pack(pady=20)
+        # ========== КНОПКА СОХРАНИТЬ ==========
+        tk.Button(add_window, text="💾 Добавить деталь", bg='#27ae60', fg='white',
+                  font=("Arial", 12, "bold"), command=save_detail).pack(pady=20)
+
+        # Фокус на поле ввода
+        name_combobox.focus()
 
     def delete_order_detail(self):
         selected = self.order_details_tree.selection()
