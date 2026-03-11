@@ -339,8 +339,7 @@ class ComponentDialog(tk.Toplevel):
 
         key_var = tk.StringVar(value=key)
         val_var = tk.StringVar(value=value)
-        ttk.Entry(row_frame, textvariable=key_var, width=16,
-                  placeholder_text="Название").grid(row=0, column=0, sticky="ew", padx=(0, 2))
+        ttk.Entry(row_frame, textvariable=key_var, width=16).grid(row=0, column=0, sticky="ew", padx=(0, 2))
         ttk.Entry(row_frame, textvariable=val_var, width=16).grid(row=0, column=1, sticky="ew", padx=2)
         ttk.Button(row_frame, text="✕", width=3,
                    command=lambda f=row_frame, kv=key_var, vv=val_var: self._remove_extra_row(f, kv, vv)).grid(
