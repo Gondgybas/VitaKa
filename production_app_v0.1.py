@@ -9501,6 +9501,10 @@ class ProductionApp:
             messagebox.showerror("Ошибка", f"Не удалось загрузить данные:\n{e}")
             return
 
+        # Фильтруем только заказы со статусом "В работе"
+        if not orders_df.empty and "Статус" in orders_df.columns:
+            orders_df = orders_df[orders_df["Статус"] == "В работе"].reset_index(drop=True)
+
         # Поиск кандидатов с нечётким сравнением
         candidates = []
         if not order_details_df.empty and not orders_df.empty:
@@ -9894,9 +9898,13 @@ class ProductionApp:
             messagebox.showerror("Ошибка", f"Не удалось загрузить данные:\n{e}")
             return
 
+        # Фильтруем только заказы со статусом "В работе"
+        if not orders_df.empty and "Статус" in orders_df.columns:
+            orders_df = orders_df[orders_df["Статус"] == "В работе"].reset_index(drop=True)
+
         if orders_df.empty:
             messagebox.showwarning("Предупреждение",
-                                   "Нет доступных заказов для распределения остатка.")
+                                   "Нет доступных заказов со статусом 'В работе' для распределения остатка.")
             return
 
         order_names = list(orders_df["Название заказа"].astype(str))
