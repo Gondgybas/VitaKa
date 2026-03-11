@@ -9911,7 +9911,7 @@ class ProductionApp:
 
         dialog = tk.Toplevel(self.root)
         dialog.title("Распределение излишка по заказам")
-        dialog.geometry("820x560")
+        dialog.geometry("1060x560")
         dialog.configure(bg='#ecf0f1')
         dialog.grab_set()
 
@@ -9974,6 +9974,10 @@ class ProductionApp:
         tk.Label(hdr, text="Количество", width=10, bg='#bdc3c7',
                  font=("Arial", 9, "bold"), anchor='w').pack(side=tk.LEFT, padx=2)
         tk.Label(hdr, text="", width=4, bg='#bdc3c7').pack(side=tk.LEFT)
+        tk.Label(hdr, text="✂️ Порезано", width=10, bg='#bdc3c7',
+                 font=("Arial", 9, "bold"), anchor='w').pack(side=tk.LEFT, padx=4)
+        tk.Label(hdr, text="🔧 Ост. гибки", width=12, bg='#bdc3c7',
+                 font=("Arial", 9, "bold"), anchor='w').pack(side=tk.LEFT, padx=4)
 
         def add_row(order_default="", detail_default="", qty_default=""):
             rf = tk.Frame(rows_container, bg='#ecf0f1', pady=2)
@@ -9995,8 +9999,61 @@ class ProductionApp:
                                  font=("Arial", 10))
             qty_entry.pack(side=tk.LEFT, padx=2)
 
+            entry = (order_var, detail_var, qty_var, rf)
+
+            def remove_row():
+                rf.destroy()
+                distribution_rows.remove(entry)
+                update_remaining_label()
+
+            tk.Button(rf, text="✕", bg='#e74c3c', fg='white',
+                      font=("Arial", 9, "bold"), width=3,
+                      command=remove_row).pack(side=tk.LEFT, padx=2)
+
+            cut_label = tk.Label(rf, text="—", width=10,
+                                 bg='#ecf0f1', font=("Arial", 9), anchor='w')
+            cut_label.pack(side=tk.LEFT, padx=4)
+
+            remain_label = tk.Label(rf, text="—", width=12,
+                                    bg='#ecf0f1', font=("Arial", 9), anchor='w')
+            remain_label.pack(side=tk.LEFT, padx=4)
+
+            def on_detail_change(event=None):
+                d_name = detail_var.get()
+                o_name = order_var.get()
+                if not d_name or not o_name or orders_df.empty or order_details_df.empty:
+                    cut_label.config(text="—")
+                    remain_label.config(text="—")
+                    return
+                om = orders_df[orders_df["Название заказа"] == o_name]
+                if om.empty:
+                    cut_label.config(text="—")
+                    remain_label.config(text="—")
+                    return
+                oid = int(om.iloc[0]["ID заказа"])
+                dm = order_details_df[
+                    (order_details_df["ID заказа"] == oid) &
+                    (order_details_df["Название детали"] == d_name)
+                ]
+                if dm.empty:
+                    cut_label.config(text="—")
+                    remain_label.config(text="—")
+                    return
+                detail_row = dm.iloc[0]
+                cut_raw = detail_row.get("Порезано", 0)
+                bent_raw = detail_row.get("Погнуто", 0)
+                cut = int(cut_raw) if pd.notna(cut_raw) else 0
+                bent = int(bent_raw) if pd.notna(bent_raw) else 0
+                # Остаток для гибки = порезано минус уже погнутые; отрицательных быть не должно
+                bending_remain = max(0, cut - bent)
+                cut_label.config(text=str(cut))
+                remain_label.config(text=str(bending_remain))
+
             def on_order_change(event=None):
                 sel = order_var.get()
+                detail_var.set("")
+                cut_label.config(text="—")
+                remain_label.config(text="—")
                 if not sel or orders_df.empty:
                     detail_combo['values'] = []
                     return
@@ -10009,18 +10066,8 @@ class ProductionApp:
                 detail_combo['values'] = list(dets["Название детали"].astype(str))
 
             order_combo.bind("<<ComboboxSelected>>", on_order_change)
+            detail_combo.bind("<<ComboboxSelected>>", on_detail_change)
             qty_var.trace_add("write", lambda *_: update_remaining_label())
-
-            entry = (order_var, detail_var, qty_var, rf)
-
-            def remove_row():
-                rf.destroy()
-                distribution_rows.remove(entry)
-                update_remaining_label()
-
-            tk.Button(rf, text="✕", bg='#e74c3c', fg='white',
-                      font=("Arial", 9, "bold"), width=3,
-                      command=remove_row).pack(side=tk.LEFT, padx=2)
 
             distribution_rows.append(entry)
             update_remaining_label()
