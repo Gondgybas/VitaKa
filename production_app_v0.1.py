@@ -10,6 +10,8 @@ import os
 import json
 
 DATABASE_FILE = "production_database.xlsx"
+LASER_CACHE_FILE = "laser_import_cache.xlsx"
+BENDING_CACHE_FILE = "bending_import_cache.xlsx"
 DATA_PATH = Path(__file__).parent  # Папка где лежит скрипт
 
 # Веса для расчёта схожести при поиске деталей гибщиков
@@ -71,6 +73,16 @@ def get_database_path():
     # По умолчанию - текущая папка
     return os.path.dirname(os.path.abspath(__file__))
 
+def get_laser_cache_path():
+    """Получить путь к файлу кэша лазерщиков из настроек"""
+    db_path = get_database_path()
+    return os.path.join(db_path, LASER_CACHE_FILE)
+
+
+def get_bending_cache_path():
+    """Получить путь к файлу кэша гибщиков из настроек"""
+    db_path = get_database_path()
+    return os.path.join(db_path, BENDING_CACHE_FILE)
 
 def load_data(sheet_name):
     """Загрузка данных из Excel с учётом пути из настроек"""
@@ -8642,123 +8654,35 @@ class ProductionApp:
     def load_laser_import_cache(self):
         """Автоматическая загрузка таблицы импорта из кэш-файла"""
         try:
-            # Используем текущую директорию скрипта
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            cache_file = os.path.join(script_dir, "laser_import_cache.xlsx")
+            cache_file = os.path.join(get_database_path(), "laser_import_cache.xlsx")
 
             if not os.path.exists(cache_file):
                 print(f"ℹ️ Кэш импорта не найден: {cache_file}")
                 return
 
-            # Загружаем из Excel
             df = pd.read_excel(cache_file, engine='openpyxl')
 
             if df.empty:
                 print("ℹ️ Кэш импорта пуст")
                 return
 
-            # Проверяем наличие необходимых колонок
             required = ["Дата (МСК)", "Время (МСК)", "username", "order", "metal", "metal_quantity", "part",
                         "part_quantity"]
 
             if all(col in df.columns for col in required):
-                # 🆕 ВАЖНО: Преобразуем NaN в пустые строки перед конвертацией
                 df = df.fillna("")
 
-                def load_laser_import_cache(self):
-                    """Автоматическая загрузка таблицы импорта из кэш-файла"""
-                    try:
-                        script_dir = os.path.dirname(os.path.abspath(__file__))
-                        cache_file = os.path.join(script_dir, "laser_import_cache.xlsx")
-
-                        if not os.path.exists(cache_file):
-                            print(f"ℹ️ Кэш импорта не найден: {cache_file}")
-                            return
-
-                        df = pd.read_excel(cache_file, engine='openpyxl')
-
-                        if df.empty:
-                            print("ℹ️ Кэш импорта пуст")
-                            return
-
-                        required = ["Дата (МСК)", "Время (МСК)", "username", "order", "metal", "metal_quantity", "part",
-                                    "part_quantity"]
-
-                        if all(col in df.columns for col in required):
-                            df = df.fillna("")
-
-                            # 🆕 СОРТИРОВКА: НОВЫЕ ЗАПИСИ ВВЕРХУ
-                            try:
-                                print("🔄 Сортировка кэша...")
-                                df['_datetime_sort'] = pd.to_datetime(
-                                    df['Дата (МСК)'].astype(str) + ' ' + df['Время (МСК)'].astype(str),
-                                    errors='coerce'
-                                )
-                                df = df.sort_values('_datetime_sort', ascending=False, na_position='last')
-                                df = df.drop('_datetime_sort', axis=1)
-
-                                if not df.empty:
-                                    first = f"{df.iloc[0]['Дата (МСК)']} {df.iloc[0]['Время (МСК)']}"
-                                    last = f"{df.iloc[-1]['Дата (МСК)']} {df.iloc[-1]['Время (МСК)']}"
-                                    print(f"✅ Отсортировано: первая={first}, последняя={last}")
-                            except Exception as e:
-                                print(f"⚠️ Ошибка сортировки: {e}")
-
-                            # Преобразуем в список словарей
-                            self.laser_table_data = df.to_dict('records')
-
-                            # Дополнительная очистка
-                            for row in self.laser_table_data:
-                                if "Списано" in row:
-                                    if pd.isna(row["Списано"]) or row["Списано"] is None:
-                                        row["Списано"] = ""
-                                    else:
-                                        row["Списано"] = str(row["Списано"]).strip()
-
-                                if "Дата списания" in row:
-                                    if pd.isna(row["Дата списания"]) or row["Дата списания"] is None:
-                                        row["Дата списания"] = ""
-                                    else:
-                                        row["Дата списания"] = str(row["Дата списания"]).strip()
-
-                            print(f"✅ Загружен кэш импорта: {len(self.laser_table_data)} записей из {cache_file}")
-
-                            # Обновляем таблицу
-                            if hasattr(self, 'laser_import_tree'):
-                                self.refresh_laser_import_table()
-
-                                if hasattr(self, 'laser_status_label'):
-                                    items_count = len(self.laser_import_tree.get_children())
-                                    auto_count = sum(1 for r in self.laser_table_data if
-                                                     r.get("Списано", "").strip() in ["✓", "Да", "Yes"])
-                                    manual_count = sum(
-                                        1 for r in self.laser_table_data if r.get("Списано", "").strip() == "Вручную")
-                                    pending_count = sum(
-                                        1 for r in self.laser_table_data if not r.get("Списано", "").strip())
-
-                                    status_text = (
-                                        f"📂 Загружено из кэша: {items_count} | "
-                                        f"✅ Списано: {auto_count} | "
-                                        f"🔵 Вручную: {manual_count} | "
-                                        f"🟡 Ожидает: {pending_count}"
-                                    )
-                                    self.laser_status_label.config(text=status_text, bg='#d1ecf1', fg='#0c5460')
-
-                    except Exception as e:
-                        pass
                 # Преобразуем в список словарей
                 self.laser_table_data = df.to_dict('records')
 
-                # 🆕 ДОПОЛНИТЕЛЬНАЯ ОЧИСТКА: убедимся что все значения - строки или числа
+                # Очистка значений
                 for row in self.laser_table_data:
-                    # Преобразуем "Списано" в строку
                     if "Списано" in row:
                         if pd.isna(row["Списано"]) or row["Списано"] is None:
                             row["Списано"] = ""
                         else:
                             row["Списано"] = str(row["Списано"]).strip()
 
-                    # Преобразуем "Дата списания" в строку
                     if "Дата списания" in row:
                         if pd.isna(row["Дата списания"]) or row["Дата списания"] is None:
                             row["Дата списания"] = ""
@@ -8767,22 +8691,17 @@ class ProductionApp:
 
                 print(f"✅ Загружен кэш импорта: {len(self.laser_table_data)} записей из {cache_file}")
 
-                # 🆕 ДИАГНОСТИКА: выведем первые строки для проверки
                 if self.laser_table_data:
                     print("\n🔍 Проверка загруженных данных:")
                     for i, row in enumerate(self.laser_table_data[:3]):
                         status = row.get("Списано", "")
                         print(f"   Строка {i + 1}: Списано = '{status}' (тип: {type(status).__name__})")
 
-                # Обновляем таблицу
                 if hasattr(self, 'laser_import_tree'):
                     self.refresh_laser_import_table()
 
-                    # Обновляем статус
                     if hasattr(self, 'laser_status_label'):
                         items_count = len(self.laser_import_tree.get_children())
-
-                        # Считаем статистику
                         auto_count = sum(
                             1 for r in self.laser_table_data if r.get("Списано", "").strip() in ["✓", "Да", "Yes"])
                         manual_count = sum(
@@ -8795,7 +8714,6 @@ class ProductionApp:
                             f"🔵 Вручную: {manual_count} | "
                             f"🟡 Ожидает: {pending_count}"
                         )
-
                         self.laser_status_label.config(
                             text=status_text,
                             bg='#d1ecf1',
@@ -10458,8 +10376,7 @@ class ProductionApp:
         if not hasattr(self, 'bending_table_data') or not self.bending_table_data:
             return
         try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            cache_file = os.path.join(script_dir, "bending_import_cache.xlsx")
+            cache_file = os.path.join(get_database_path(), "bending_import_cache.xlsx")
             df = pd.DataFrame(self.bending_table_data)
             for col in ['_sort_order', '_item_id', '_datetime_sort']:
                 if col in df.columns:
@@ -10472,8 +10389,7 @@ class ProductionApp:
     def load_bending_import_cache(self):
         """Автоматическая загрузка таблицы гибщиков из кэш-файла"""
         try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            cache_file = os.path.join(script_dir, "bending_import_cache.xlsx")
+            cache_file = os.path.join(get_database_path(), "bending_import_cache.xlsx")
 
             if not os.path.exists(cache_file):
                 print(f"ℹ️ Кэш гибщиков не найден: {cache_file}")
