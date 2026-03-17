@@ -8638,8 +8638,7 @@ class ProductionApp:
             return
 
         try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            cache_file = os.path.join(script_dir, "laser_import_cache.xlsx")
+            cache_file = os.path.join(get_database_path(), "laser_import_cache.xlsx")
 
             print(f"💾 Сохранение {len(self.laser_table_data)} записей в кэш...")
 
